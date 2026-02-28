@@ -42,7 +42,7 @@ Minimal configuration with defaults (no `env` block required):
 
 ```json
 {
-  "mcpServers": {
+  "severs": {
     "knocoph": {
       "type": "stdio",
       "command": "knocoph"
