@@ -1,5 +1,5 @@
 {
-  "mcpServers": {
+  "servers": {
     "knocoph": {
       "type": "stdio",
       "command": "node",
