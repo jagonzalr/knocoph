@@ -6,7 +6,50 @@ Instead of AI assistants greedily reading entire files and burning context token
 
 ## Installation
 
-`npm i knocoph -g`
+Install globally so the `knocoph` command is available in PATH:
+
+```bash
+npm install -g knocoph
+```
+
+### Configuring the MCP server
+
+Add Knocoph to your MCP client configuration (e.g. `.mcp.json`, `claude_desktop_config.json`):
+
+```json
+{
+  "servers": {
+    "knocoph": {
+      "type": "stdio",
+      "command": "knocoph",
+      "env": {
+        "knocoph_DB": "./.knocoph/graph.db",
+        "knocoph_ROOT": "."
+      }
+    }
+  }
+}
+```
+
+Both `env` variables are **optional** — Knocoph uses sensible defaults if they are omitted:
+
+| Variable       | Default               | Description                                                                                                                     |
+| -------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `knocoph_DB`   | `./.knocoph/graph.db` | Path to the SQLite database file. Relative paths resolve from the working directory (the project root).                         |
+| `knocoph_ROOT` | `.`                   | Root directory to auto-index on first run (before any `index_project` call). Relative paths resolve from the working directory. |
+
+Minimal configuration with defaults (no `env` block required):
+
+```json
+{
+  "severs": {
+    "knocoph": {
+      "type": "stdio",
+      "command": "knocoph"
+    }
+  }
+}
+```
 
 ## Features
 
@@ -39,17 +82,13 @@ Instead of AI assistants greedily reading entire files and burning context token
 ## Quick Reference
 
 ```bash
-# Start the MCP server
-npm run build
-node ./dist/index.js <database-path> <project-root> [--globs=pattern]
+# Install globally
+npm install -g knocoph
 
-# Rebuild after changes
-npm run build
-
-# Run tests
+# Run tests (contributors)
 npm run test:ci
 
-# Format and lint
+# Format and lint (contributors)
 npm run prettier
 npm run lint
 ```

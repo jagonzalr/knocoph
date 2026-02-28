@@ -2,8 +2,8 @@
   "name": "knocoph",
   "description": "Knocoph is a local MCP server that parses TypeScript and JavaScript codebases into a persistent knowledge graph stored in SQLite.",
   "version": "1.1.0",
-  "author": "Jose Antonio Gonzalez Rodriguez",
-  "license": "ISC",
+  "author": "José Antonio González Rodríguez",
+  "license": "MIT",
   "bugs": {
     "url": "https://github.com/jagonzalr/knocoph/issues"
   },
@@ -24,6 +24,9 @@
   ],
   "type": "module",
   "main": "./dist/index.js",
+  "bin": {
+    "knocoph": "./dist/index.js"
+  },
   "files": [
     "dist"
   ],
