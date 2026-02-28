@@ -1,5 +1,11 @@
 # knocoph
 
+## 1.1.1
+
+### Patch Changes
+
+- 7632691: Make knocoph executable for global installations
+
 ## 1.1.0
 
 ### Minor Changes
