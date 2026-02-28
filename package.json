@@ -11,7 +11,10 @@
     "test:ci": "vitest run --coverage",
     "lint": "eslint --fix .",
     "prettier": "prettier --write .",
-    "prepare": "husky"
+    "prepare": "husky",
+    "changeset": "changeset",
+    "version-packages": "changeset version",
+    "release": "changeset publish"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.27.1",
