@@ -6,7 +6,7 @@ Instead of AI assistants greedily reading entire files and burning context token
 
 ## Installation
 
-`npm i knocoph`
+`npm i knocoph -g`
 
 ## Features
 
