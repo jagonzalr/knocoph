@@ -24,6 +24,9 @@
   ],
   "type": "module",
   "main": "./dist/index.js",
+  "bin": {
+    "knocoph": "./dist/index.js"
+  },
   "files": [
     "dist"
   ],
