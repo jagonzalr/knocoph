@@ -1,0 +1,45 @@
+{
+  "name": "knocoph",
+  "description": "Knocoph is a local MCP server that parses TypeScript and JavaScript codebases into a persistent knowledge graph stored in SQLite.",
+  "version": "0.0.1",
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "build:watch": "tsc --watch",
+    "test": "vitest run",
+    "test:ci": "vitest run --coverage",
+    "lint": "eslint --fix .",
+    "prettier": "prettier --write .",
+    "prepare": "husky"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.27.1",
+    "@typescript-eslint/typescript-estree": "8.56.1",
+    "better-sqlite3": "12.6.2",
+    "chokidar": "5.0.0",
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/better-sqlite3": "7.6.13",
+    "@types/node": "25.3.2",
+    "@vitest/coverage-v8": "4.0.18",
+    "eslint": "10.0.2",
+    "eslint-config-prettier": "10.1.8",
+    "eslint-plugin-prettier": "5.5.5",
+    "globals": "17.3.0",
+    "husky": "9.1.7",
+    "lint-staged": "16.2.7",
+    "prettier": "3.8.1",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.56.1",
+    "vitest": "4.0.18"
+  },
+  "lint-staged": {
+    "*.{ts,tsx}": [
+      "npm run prettier",
+      "npm run lint"
+    ]
+  }
+}
