@@ -13,6 +13,7 @@ Instead of AI assistants greedily reading entire files and burning context token
 ## Why
 
 Traditional approaches to codebase exploration waste tokens and context:
+
 - AI assistants read entire files to answer simple structural questions
 - Context bloat accumulates from redundant file reads
 - Token expenditure skyrockets with codebase size
