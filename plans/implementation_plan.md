@@ -233,11 +233,11 @@ These are deliberate scope decisions, not bugs. Document each in a code comment 
 
 | Limitation                          | What you observe                                                                  | Why accepted                                                                                               | V2 path                                                 |
 | ----------------------------------- | --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| No TypeScript type resolution       | Method calls `svc.create()` where `svc` is a local variable produce no CALLS edge | ESTree gives syntactic info only; type resolution requires the TS compiler API at 20x the performance cost | PR-V2-2: optional pass using ts.createProgram           |
-| No tsconfig paths resolution        | Imports using `@myapp/auth` aliases produce dangling target edges                 | Path alias resolution requires tsconfig parsing; not worth v1 complexity                                   | PR-V2-3: accept optional tsconfig_path in index_project |
+| No TypeScript type resolution       | Method calls `svc.create()` where `svc` is a local variable produce no CALLS edge | ESTree gives syntactic info only; type resolution requires the TS compiler API at 20x the performance cost | PR-V2-3: optional pass using ts.createProgram           |
+| No tsconfig paths resolution        | Imports using `@myapp/auth` aliases produce dangling target edges                 | Path alias resolution requires tsconfig parsing; not worth v1 complexity                                   | PR-V2-4: accept optional tsconfig_path in index_project |
 | No monorepo support                 | Cross-package edges are missing or dangling                                       | Single-project scope only; configure one .mcp.json per package                                             | Use one .mcp.json per package                           |
 | No REFERENCES edges                 | Type annotation usages invisible to graph; blast radius underestimates            | Out of v1 scope                                                                                            | PR-V2-1: second AST pass                                |
-| File-incremental only, no ripple    | When A changes, B's stale edges to A's old node IDs dangle until B is re-indexed  | Ripple invalidation requires reverse-import index and a queue                                              | PR-V2-4                                                 |
+| File-incremental only, no ripple    | When A changes, B's stale edges to A's old node IDs dangle until B is re-indexed  | Ripple invalidation requires reverse-import index and a queue                                              | PR-V2-5                                                 |
 | Dynamic import with expression path | `import(getPath())` is dropped silently                                           | Cannot resolve expression paths statically                                                                 | Record with placeholder target                          |
 | Re-export kind is approximate       | Re-export EXPORTS edges use kind `unknown` in target node ID                      | Would require re-parsing source file during re-export handling                                             | DB lookup for existing node kind                        |
 | No duplicate symbol disambiguation  | Two files both defining `function foo` both appear in find_symbol results         | This is correct; use file_path field to distinguish                                                        | N/A                                                     |
@@ -726,7 +726,7 @@ Combined: `awaitWriteFinish` ensures we read a complete file. Per-file debounce 
 
 **Self-healing.** The next full `index_project` call re-indexes every file and corrects all stale edges.
 
-**What v1 explicitly does not do.** Cross-file ripple invalidation. Deferred to PR-V2-4.
+**What v1 explicitly does not do.** Cross-file ripple invalidation. Deferred to PR-V2-5.
 
 ### 9.4 Dynamic Import Detection
 
@@ -775,7 +775,7 @@ Multi-hop re-export chains (A re-exports from B which re-exports from C) are rec
 
 **The right gap to leave.** The v1 per-file symbol table correctly handles the most common case: direct function calls to named and aliased imports. The gap — method calls on instances where the receiver is a local variable — is real but minor for a first version. The graph is genuinely useful without it.
 
-**V2 path.** PR-V2-2: optional second pass using the TS compiler API, gated behind `knocoph_DEEP_RESOLVE=1` environment variable so it can be disabled when performance matters.
+**V2 path.** PR-V2-3: optional second pass using the TS compiler API, gated behind `knocoph_DEEP_RESOLVE=1` environment variable so it can be disabled when performance matters.
 
 ### 9.7 Per-File Symbol Table and Call Resolution
 
@@ -1795,7 +1795,162 @@ Complete and validate all v1 PRs before starting any of these. "Validate" means 
 
 ---
 
-### PR-V2-2: TypeScript Compiler API for Semantic Call Resolution
+### PR-V2-2: Codebase Overview Tool
+
+**Goal.** Expose a single `codebase_overview` tool that returns a structural summary of the entire indexed codebase from the DB. Replaces the need for an AI to call `query_architecture` on every file just to orient itself in an unfamiliar project.
+
+**Why this and not `explain_codebase`.** "Explain" implies semantic understanding — what the code _does_, its domain, its architecture patterns. The DB stores only structural topology: nodes, edges, file paths. This tool delivers structural aggregates. Naming it `codebase_overview` is accurate; naming it `explain_codebase` would set a false expectation.
+
+**Files to create or modify:**
+
+- `src/queries.ts` — add `codebaseOverview(db): OverviewResult`
+- `src/tools/codebase-overview.ts` — new tool handler, `register` function
+- `src/server.ts` — call `registerCodebaseOverview`
+- `src/tools/index-project.ts` — no change needed; meta table already stores root_dir
+- `tests/queries.test.ts` — add `codebaseOverview` tests
+
+**Tasks:**
+
+1. Add `OverviewResult` interface to `src/queries.ts`:
+
+   ```typescript
+   export interface OverviewResult {
+     file_count: number;
+     node_count: number;
+     edge_count: number;
+     node_kinds: { kind: string; count: number }[];
+     edge_types: { relationship_type: string; count: number }[];
+     top_called: {
+       id: string;
+       name: string;
+       kind: string;
+       file_path: string;
+       caller_count: number;
+     }[];
+     top_imported: { file_path: string; importer_count: number }[];
+     entry_points: {
+       id: string;
+       name: string;
+       kind: string;
+       file_path: string;
+     }[];
+   }
+   ```
+
+2. Add `codebaseOverview(db: Database.Database): OverviewResult` to `src/queries.ts`. All data comes from aggregate SQL — no file reads. Queries to implement:
+
+   ```sql
+   -- file_count
+   SELECT COUNT(*) AS n FROM files
+
+   -- node_count
+   SELECT COUNT(*) AS n FROM nodes
+
+   -- edge_count
+   SELECT COUNT(*) AS n FROM edges
+
+   -- node_kinds
+   SELECT kind, COUNT(*) AS count FROM nodes GROUP BY kind ORDER BY count DESC
+
+   -- edge_types
+   SELECT relationship_type, COUNT(*) AS count FROM edges GROUP BY relationship_type ORDER BY count DESC
+
+   -- top_called (top 10 nodes by incoming CALLS edges)
+   SELECT n.id, n.name, n.kind, n.file_path, COUNT(*) AS caller_count
+   FROM edges e
+   JOIN nodes n ON n.id = e.target_id
+   WHERE e.relationship_type = 'CALLS'
+   GROUP BY e.target_id
+   ORDER BY caller_count DESC
+   LIMIT 10
+
+   -- top_imported (top 10 files by incoming IMPORTS edges)
+   SELECT n.file_path, COUNT(*) AS importer_count
+   FROM edges e
+   JOIN nodes n ON n.id = e.target_id
+   WHERE e.relationship_type = 'IMPORTS'
+   GROUP BY n.file_path
+   ORDER BY importer_count DESC
+   LIMIT 10
+
+   -- entry_points: exported nodes with zero incoming CALLS edges
+   -- these are likely public API surfaces or CLI/server start points
+   SELECT n.id, n.name, n.kind, n.file_path
+   FROM nodes n
+   WHERE n.exported = 1
+     AND n.id NOT IN (
+       SELECT target_id FROM edges WHERE relationship_type = 'CALLS'
+     )
+   ORDER BY n.file_path, n.name
+   LIMIT 20
+   ```
+
+   Wrap all queries in a single function. No recursive CTEs needed — these are flat aggregates.
+
+3. `src/tools/codebase-overview.ts`: Follow the identical handler structure used by every other tool file. Input schema has no required parameters. Call `codebaseOverview(db)` and return the result.
+
+   ```typescript
+   import { z } from "zod";
+   import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+   import type Database from "better-sqlite3";
+   import { codebaseOverview } from "../queries.js";
+
+   export function register(server: McpServer, db: Database.Database): void {
+     server.tool(
+       "codebase_overview",
+       "Return a structural summary of the entire indexed codebase: file and node counts, kind distribution, most-called functions, most-imported files, and likely entry points. Call this first when orienting in an unfamiliar project.",
+       {},
+       async () => {
+         try {
+           const result = codebaseOverview(db);
+           const summary = `Codebase has ${result.file_count} file(s), ${result.node_count} symbol(s), and ${result.edge_count} edge(s).`;
+           return {
+             content: [
+               {
+                 type: "text",
+                 text: JSON.stringify({ summary, ...result }, null, 2),
+               },
+             ],
+           };
+         } catch (err) {
+           return {
+             content: [
+               { type: "text", text: JSON.stringify({ error: String(err) }) },
+             ],
+             isError: true,
+           };
+         }
+       }
+     );
+   }
+   ```
+
+4. Register in `src/server.ts` alongside the other 7 tools. This brings the total to 8 tools.
+
+5. Update the `tools/list` acceptance test in PR-7 to expect 8 tools instead of 7.
+
+6. `tests/queries.test.ts`: Add `codebaseOverview` tests using the same seeded in-memory DB. Required cases:
+   - Empty DB: all counts are 0, all arrays are empty, no throw.
+   - Seeded with 2 files, 5 nodes, 3 CALLS edges: counts match exactly, top_called returns correct node with correct count, entry_points returns exported nodes that receive no CALLS.
+   - entry_points cap test: seed 25 exported nodes with no callers; assert result length is 20.
+
+**What this tool does NOT do:**
+
+- No semantic explanation of what the code does — that requires LLM inference on source content, which is outside Knocoph's scope.
+- No tsconfig or package.json reading — structural data only.
+- No cross-project aggregation — one DB, one project.
+
+**Acceptance criteria:**
+
+- `npm run test:ci` passes with 80%+ coverage on the new `codebaseOverview` function
+- Empty DB returns no error and all-zero counts
+- Tool appears in MCP Inspector alongside the other 7 tools
+- `codebase_overview` on a 100+ file project completes in under 100ms (all flat SQL, no recursion)
+- Summary field is a single human-readable string; full data in structured fields alongside it
+
+---
+
+### PR-V2-3: TypeScript Compiler API for Semantic Call Resolution
 
 **Goal.** Resolve method calls on instances (`svc.create()` -> `UserService.create`).
 
@@ -1818,7 +1973,7 @@ When set:
 
 ---
 
-### PR-V2-3: tsconfig Path Alias Resolution
+### PR-V2-4: tsconfig Path Alias Resolution
 
 **Goal.** Resolve imports using `compilerOptions.paths` mappings. Fixes dangling edges for `@myapp/auth`-style aliases.
 
@@ -1833,7 +1988,7 @@ When set:
 
 ---
 
-### PR-V2-4: Cross-File Ripple Invalidation
+### PR-V2-5: Cross-File Ripple Invalidation
 
 **Goal.** When file A changes, re-index all files that directly import A.
 

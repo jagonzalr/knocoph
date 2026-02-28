@@ -218,6 +218,115 @@ export function whyIsThisUsed(
   return db.prepare(sql).all(nodeId, nodeId, maxDepth) as WhyRow[];
 }
 
+// Return type for codebaseOverview
+export interface OverviewResult {
+  file_count: number;
+  node_count: number;
+  edge_count: number;
+  node_kinds: { kind: string; count: number }[];
+  edge_types: { relationship_type: string; count: number }[];
+  top_called: {
+    id: string;
+    name: string;
+    kind: string;
+    file_path: string;
+    caller_count: number;
+  }[];
+  top_imported: { file_path: string; importer_count: number }[];
+  entry_points: { id: string; name: string; kind: string; file_path: string }[];
+}
+
+// codebaseOverview — structural summary of the entire indexed codebase.
+// All data comes from aggregate SQL — no file reads.
+// Returns counts, kind/type distributions, hot spots, and likely entry points.
+export function codebaseOverview(db: Database.Database): OverviewResult {
+  const file_count = (
+    db.prepare("SELECT COUNT(*) AS n FROM files").get() as { n: number }
+  ).n;
+
+  const node_count = (
+    db.prepare("SELECT COUNT(*) AS n FROM nodes").get() as { n: number }
+  ).n;
+
+  const edge_count = (
+    db.prepare("SELECT COUNT(*) AS n FROM edges").get() as { n: number }
+  ).n;
+
+  const node_kinds = db
+    .prepare(
+      `SELECT kind, COUNT(*) AS count
+       FROM nodes
+       GROUP BY kind
+       ORDER BY count DESC`
+    )
+    .all() as { kind: string; count: number }[];
+
+  const edge_types = db
+    .prepare(
+      `SELECT relationship_type, COUNT(*) AS count
+       FROM edges
+       GROUP BY relationship_type
+       ORDER BY count DESC`
+    )
+    .all() as { relationship_type: string; count: number }[];
+
+  const top_called = db
+    .prepare(
+      `SELECT n.id, n.name, n.kind, n.file_path, COUNT(*) AS caller_count
+       FROM edges e
+       JOIN nodes n ON n.id = e.target_id
+       WHERE e.relationship_type = 'CALLS'
+       GROUP BY e.target_id
+       ORDER BY caller_count DESC
+       LIMIT 10`
+    )
+    .all() as {
+    id: string;
+    name: string;
+    kind: string;
+    file_path: string;
+    caller_count: number;
+  }[];
+
+  const top_imported = db
+    .prepare(
+      `SELECT n.file_path, COUNT(*) AS importer_count
+       FROM edges e
+       JOIN nodes n ON n.id = e.target_id
+       WHERE e.relationship_type = 'IMPORTS'
+       GROUP BY n.file_path
+       ORDER BY importer_count DESC
+       LIMIT 10`
+    )
+    .all() as { file_path: string; importer_count: number }[];
+
+  // Entry points: exported nodes that receive no incoming CALLS edges.
+  // These are likely public API surfaces or CLI/server start points.
+  const entry_points = db
+    .prepare(
+      `SELECT n.id, n.name, n.kind, n.file_path
+       FROM nodes n
+       WHERE n.exported = 1
+         AND n.id NOT IN (
+           SELECT target_id FROM edges WHERE relationship_type = 'CALLS'
+         )
+       ORDER BY n.file_path, n.name
+       LIMIT 20`
+    )
+    .all() as { id: string; name: string; kind: string; file_path: string }[];
+
+  return {
+    file_count,
+    node_count,
+    edge_count,
+    node_kinds,
+    edge_types,
+    top_called,
+    top_imported,
+    entry_points,
+  };
+}
+
 // queryArchitecture — file-level view of defined symbols and cross-file relationships.
 // includeInternalEdges=false (default): excludes edges where both ends are in the same file.
 // includeInternalEdges=true: returns all edges sourced from nodes in the file.

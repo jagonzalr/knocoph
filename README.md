@@ -9,7 +9,7 @@ Instead of AI assistants greedily reading entire files and burning context token
 - **Persistent code graph** — parses codebases into nodes (symbols) and edges (relationships), stored in SQLite
 - **Automatic indexing** — file watcher keeps the graph updated as code changes
 - **Zero file reading** — query structural questions without opening source files
-- **MCP tools** — 7 specialized query tools for different exploration patterns
+- **MCP tools** — 8 specialized query tools for different exploration patterns
 - **Cross-file relationships** — tracks imports, exports, calls, inheritance, and containment
 
 ## How It Works
@@ -23,6 +23,7 @@ Instead of AI assistants greedily reading entire files and burning context token
 
 | Tool                 | Purpose                                                                      |
 | -------------------- | ---------------------------------------------------------------------------- |
+| `codebase_overview`  | Get structural summary of entire codebase (files, symbols, kind distribution) |
 | `find_symbol`        | Locate any symbol by name and return its file and line range                 |
 | `get_neighbors`      | Explore incoming/outgoing relationships (what a symbol calls, what calls it) |
 | `get_snippet`        | Fetch exact source code snippet for a symbol                                 |
