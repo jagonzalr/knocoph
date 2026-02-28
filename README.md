@@ -42,7 +42,7 @@ Minimal configuration with defaults (no `env` block required):
 
 ```json
 {
-  "severs": {
+  "servers": {
     "knocoph": {
       "type": "stdio",
       "command": "knocoph"
@@ -50,6 +50,19 @@ Minimal configuration with defaults (no `env` block required):
   }
 }
 ```
+
+### Instructing AI assistants to use Knocoph
+
+To guide your AI assistant (Claude, Copilot, etc.) to use Knocoph MCP tools effectively instead of reading files directly, copy the instructions from [MCP_USAGE.md](MCP_USAGE.md) into your AI assistant's system prompt, AGENTS.md, CLAUDE.md or equivalent configuration file.
+
+These instructions teach AI to:
+
+- Use `find_symbol` before opening files
+- Use graph queries to understand relationships instead of burning context tokens
+- Call `explain_impact` before making changes
+- Use `get_snippet` to fetch exact code ranges rather than entire files
+
+This approach minimizes token consumption and provides fast, accurate structural answers.
 
 ## Features
 
