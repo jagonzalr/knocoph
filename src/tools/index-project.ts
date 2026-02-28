@@ -17,7 +17,14 @@ export function register(server: McpServer, db: Database.Database): void {
         root_dir: z.string().min(1),
         globs: z
           .array(z.string())
-          .default(["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"]),
+          .default([
+            "**/*.ts",
+            "**/*.tsx",
+            "**/*.js",
+            "**/*.jsx",
+            "**/*.mjs",
+            "**/*.cjs",
+          ]),
         ignore: z
           .array(z.string())
           .default([
