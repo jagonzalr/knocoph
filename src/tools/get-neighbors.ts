@@ -23,6 +23,7 @@ export function register(server: McpServer, db: Database.Database): void {
               "EXTENDS",
               "IMPLEMENTS",
               "CONTAINS",
+              "REFERENCES",
             ])
           )
           .optional(),

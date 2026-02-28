@@ -16,7 +16,8 @@ export type EdgeType =
   | "CALLS"
   | "EXTENDS"
   | "IMPLEMENTS"
-  | "CONTAINS";
+  | "CONTAINS"
+  | "REFERENCES";
 
 export interface ParsedNode {
   id: string;
