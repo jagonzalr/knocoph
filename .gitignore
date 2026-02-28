@@ -5,3 +5,5 @@ dist/
 *.db-wal
 *.db-shm
 coverage/
+*.tgz
+.DS_Store
