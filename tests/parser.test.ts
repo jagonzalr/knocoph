@@ -682,3 +682,112 @@ describe("walkShallow — array node iteration", () => {
     expect(callsEdges.length).toBeGreaterThanOrEqual(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// type-refs.ts fixture — REFERENCES edge type (PR-V2-1)
+// ---------------------------------------------------------------------------
+
+describe("type-refs.ts — REFERENCES edges", () => {
+  const fp = fixturePath("type-refs.ts");
+  const simpleFp = fixturePath("simple.ts");
+  const result = parseFile(fp, fixtureContent("type-refs.ts"));
+
+  const refsEdges = result.edges.filter(
+    (e) => e.relationship_type === "REFERENCES"
+  );
+
+  it("emits at least one REFERENCES edge", () => {
+    expect(refsEdges.length).toBeGreaterThan(0);
+  });
+
+  it("greetUser references User interface from simple.ts (parameter type)", () => {
+    const edge = refsEdges.find(
+      (e) =>
+        e.source_id === testNodeId(fp, "greetUser", "function") &&
+        e.target_id === testNodeId(simpleFp, "User", "interface")
+    );
+    expect(edge).toBeDefined();
+  });
+
+  it("UserRepository interface references User from simple.ts (method signatures)", () => {
+    const edge = refsEdges.find(
+      (e) =>
+        e.source_id === testNodeId(fp, "UserRepository", "interface") &&
+        e.target_id === testNodeId(simpleFp, "User", "interface")
+    );
+    expect(edge).toBeDefined();
+  });
+
+  it("UserOrNull type alias references User from simple.ts", () => {
+    const edge = refsEdges.find(
+      (e) =>
+        e.source_id === testNodeId(fp, "UserOrNull", "type_alias") &&
+        e.target_id === testNodeId(simpleFp, "User", "interface")
+    );
+    expect(edge).toBeDefined();
+  });
+
+  it("makeId arrow function references local LocalId interface", () => {
+    const edge = refsEdges.find(
+      (e) =>
+        e.source_id === testNodeId(fp, "makeId", "arrow_function") &&
+        e.target_id === testNodeId(fp, "LocalId", "interface")
+    );
+    expect(edge).toBeDefined();
+  });
+
+  it("REFERENCES edges deduplicated — UserRepository -> User appears exactly once", () => {
+    // UserRepository.findById and .save both reference User, but the edge
+    // source is the interface node, so deduplication keeps only one edge.
+    const edges = refsEdges.filter(
+      (e) =>
+        e.source_id === testNodeId(fp, "UserRepository", "interface") &&
+        e.target_id === testNodeId(simpleFp, "User", "interface")
+    );
+    expect(edges.length).toBe(1);
+  });
+
+  it("no REFERENCES edge for built-in types (string, void, null)", () => {
+    // 'string', 'void', and 'null' are not in the symbol table so no edges
+    // should be emitted for them.
+    const builtinEdge = refsEdges.find(
+      (e) =>
+        e.target_id.includes("string") ||
+        e.target_id.includes("void") ||
+        e.target_id.includes("null")
+    );
+    expect(builtinEdge).toBeUndefined();
+  });
+});
+
+describe("REFERENCES — inline edge-type sanity", () => {
+  it("emits REFERENCES for a type alias referencing a local interface", () => {
+    const fp = "/tmp/knocoph-refs-local.ts";
+    const content = `
+      export interface Config { timeout: number; }
+      export type Options = Config;
+    `;
+    const result = parseFile(fp, content);
+    const edge = result.edges.find(
+      (e) =>
+        e.relationship_type === "REFERENCES" &&
+        e.source_id === testNodeId(fp, "Options", "type_alias") &&
+        e.target_id === testNodeId(fp, "Config", "interface")
+    );
+    expect(edge).toBeDefined();
+  });
+
+  it("emits no REFERENCES for external module types not in symbol table", () => {
+    const fp = "/tmp/knocoph-refs-external.ts";
+    // 'Promise' is a global builtin, not imported, so it won't be in the
+    // symbol table and should not produce a REFERENCES edge.
+    const content = `
+      export async function fetch(): Promise<string> { return ""; }
+    `;
+    const result = parseFile(fp, content);
+    const refEdges = result.edges.filter(
+      (e) => e.relationship_type === "REFERENCES"
+    );
+    expect(refEdges.length).toBe(0);
+  });
+});

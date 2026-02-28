@@ -302,6 +302,69 @@ function collectCallEdges(
 }
 
 // ---------------------------------------------------------------------------
+// Reference edge collection (Pass 4)
+// ---------------------------------------------------------------------------
+
+// Collect REFERENCES edges from within a symbol's AST node by walking for
+// TSTypeReference nodes (type annotations). Uses a full walk (not shallow) so
+// that type annotations nested inside function bodies, generic parameters, and
+// conditional types are all captured.
+//
+// Known limitation: for cross-file references the target kind is guessed as
+// "interface" when the resolved name is not found in localNodesMap. This may
+// produce dangling edges when the actual kind is "type_alias", "class", or
+// "enum". Accepted per section 5 of the implementation plan; correct kind
+// resolution requires the TS compiler API (PR-V2-2).
+//
+// Note: Identifier walk for value-position references is omitted here because
+// reliably distinguishing non-call, non-declaration, non-import identifiers
+// requires parent tracking that the current walk helpers do not provide.
+function collectReferenceEdges(
+  bodyAstNode: TSESTree.Node,
+  currentId: string,
+  symbolTable: Map<string, SymbolEntry>,
+  localNodesMap: Map<string, ParsedNode>,
+  filePath: string,
+  edges: ParsedEdge[]
+): void {
+  walk(bodyAstNode, (n) => {
+    if (n.type !== "TSTypeReference") return;
+
+    // typeName is Identifier | TSQualifiedName. For qualified names (A.B) we
+    // take the leftmost identifier which is the imported namespace/module name.
+    const typeName = n.typeName;
+    const name =
+      typeName.type === "Identifier"
+        ? typeName.name
+        : typeName.type === "TSQualifiedName" &&
+            typeName.left.type === "Identifier"
+          ? typeName.left.name
+          : null;
+    if (!name) return;
+
+    const entry = symbolTable.get(name);
+    if (!entry) return;
+
+    const targetFile =
+      entry.sourceFile === filePath ? filePath : entry.sourceFile;
+
+    // For local nodes, use the exact id from localNodesMap to guarantee a
+    // non-dangling edge. For cross-file nodes, fall back to "interface" as the
+    // canonical type kind guess.
+    const localNode = localNodesMap.get(entry.resolvedName);
+    const targetId = localNode
+      ? localNode.id
+      : nodeId(targetFile, entry.resolvedName, "interface");
+
+    edges.push({
+      source_id: currentId,
+      target_id: targetId,
+      relationship_type: "REFERENCES",
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Main export
 // ---------------------------------------------------------------------------
 
@@ -333,6 +396,14 @@ export function parseFile(filePath: string, content: string): ParsedFile {
   // are extracted.
   type NodeAstPair = { parsed: ParsedNode; ast: TSESTree.Node };
   const callablePairs: NodeAstPair[] = [];
+
+  // Pairs of (ParsedNode, AST node) for the REFERENCES pass (Pass 4). Includes
+  // ALL top-level symbols — callables and non-callables — so that type
+  // annotations on interfaces, type aliases, and plain variable declarations
+  // are captured. Class bodies are excluded here; each class method is listed
+  // individually (same as callablePairs) to attribute references to the correct
+  // method scope rather than the class as a whole.
+  const referenceAstPairs: NodeAstPair[] = [];
 
   // -------------------------------------------------------------------------
   // Extract nodes from top-level statements
@@ -367,6 +438,7 @@ export function parseFile(filePath: string, content: string): ParsedFile {
         nodes.push(n);
         localNodesMap.set(n.name, n);
         callablePairs.push({ parsed: n, ast: decl });
+        referenceAstPairs.push({ parsed: n, ast: decl });
         break;
       }
       case "ClassDeclaration": {
@@ -440,6 +512,7 @@ export function parseFile(filePath: string, content: string): ParsedFile {
           });
 
           callablePairs.push({ parsed: memberNode, ast: member.value });
+          referenceAstPairs.push({ parsed: memberNode, ast: member.value });
         }
         break;
       }
@@ -454,6 +527,7 @@ export function parseFile(filePath: string, content: string): ParsedFile {
         );
         nodes.push(n);
         localNodesMap.set(n.name, n);
+        referenceAstPairs.push({ parsed: n, ast: decl });
         break;
       }
       case "TSTypeAliasDeclaration": {
@@ -467,6 +541,7 @@ export function parseFile(filePath: string, content: string): ParsedFile {
         );
         nodes.push(n);
         localNodesMap.set(n.name, n);
+        referenceAstPairs.push({ parsed: n, ast: decl });
         break;
       }
       case "TSEnumDeclaration": {
@@ -480,6 +555,7 @@ export function parseFile(filePath: string, content: string): ParsedFile {
         );
         nodes.push(n);
         localNodesMap.set(n.name, n);
+        referenceAstPairs.push({ parsed: n, ast: decl });
         break;
       }
       case "TSModuleDeclaration": {
@@ -494,6 +570,7 @@ export function parseFile(filePath: string, content: string): ParsedFile {
         );
         nodes.push(n);
         localNodesMap.set(n.name, n);
+        referenceAstPairs.push({ parsed: n, ast: decl });
         break;
       }
       case "VariableDeclaration": {
@@ -514,6 +591,9 @@ export function parseFile(filePath: string, content: string): ParsedFile {
           localNodesMap.set(n.name, n);
           if (isArrow && declarator.init) {
             callablePairs.push({ parsed: n, ast: declarator.init });
+            referenceAstPairs.push({ parsed: n, ast: declarator.init });
+          } else {
+            referenceAstPairs.push({ parsed: n, ast: declarator });
           }
         }
         break;
@@ -660,6 +740,20 @@ export function parseFile(filePath: string, content: string): ParsedFile {
   // -------------------------------------------------------------------------
   for (const { parsed, ast: bodyAst } of callablePairs) {
     collectCallEdges(
+      bodyAst,
+      parsed.id,
+      symbolTable,
+      localNodesMap,
+      filePath,
+      edges
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // REFERENCES edges — Pass 4
+  // -------------------------------------------------------------------------
+  for (const { parsed, ast: bodyAst } of referenceAstPairs) {
+    collectReferenceEdges(
       bodyAst,
       parsed.id,
       symbolTable,
