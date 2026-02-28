@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "knocoph": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["./dist/index.js"],
+      "env": {
+        "knocoph_DB": "./.knocoph/graph.db",
+        "knocoph_ROOT": "."
+      }
+    }
+  }
+}
