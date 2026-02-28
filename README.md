@@ -21,16 +21,16 @@ Instead of AI assistants greedily reading entire files and burning context token
 
 ## MCP Tools
 
-| Tool                 | Purpose                                                                      |
-| -------------------- | ---------------------------------------------------------------------------- |
+| Tool                 | Purpose                                                                       |
+| -------------------- | ----------------------------------------------------------------------------- |
 | `codebase_overview`  | Get structural summary of entire codebase (files, symbols, kind distribution) |
-| `find_symbol`        | Locate any symbol by name and return its file and line range                 |
-| `get_neighbors`      | Explore incoming/outgoing relationships (what a symbol calls, what calls it) |
-| `get_snippet`        | Fetch exact source code snippet for a symbol                                 |
-| `explain_impact`     | Blast radius analysis — what breaks if you change a symbol?                  |
-| `why_is_this_used`   | Reverse traversal — why does this symbol exist?                              |
-| `query_architecture` | File-level view — what symbols does a file define and import/export?         |
-| `index_project`      | Trigger or refresh graph indexing for a codebase                             |
+| `find_symbol`        | Locate any symbol by name and return its file and line range                  |
+| `get_neighbors`      | Explore incoming/outgoing relationships (what a symbol calls, what calls it)  |
+| `get_snippet`        | Fetch exact source code snippet for a symbol                                  |
+| `explain_impact`     | Blast radius analysis — what breaks if you change a symbol?                   |
+| `why_is_this_used`   | Reverse traversal — why does this symbol exist?                               |
+| `query_architecture` | File-level view — what symbols does a file define and import/export?          |
+| `index_project`      | Trigger or refresh graph indexing for a codebase                              |
 
 ## Quick Reference
 
