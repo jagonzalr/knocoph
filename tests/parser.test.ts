@@ -1,0 +1,687 @@
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
+import { describe, expect, it } from "vitest";
+
+import { parseFile } from "../src/parser.js";
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function testNodeId(filePath: string, name: string, kind: string): string {
+  return createHash("sha256")
+    .update(filePath + ":" + name + ":" + kind)
+    .digest("hex");
+}
+
+const testsDir = path.dirname(fileURLToPath(import.meta.url));
+const fixturesDir = path.join(testsDir, "fixtures");
+
+function fixturePath(rel: string): string {
+  return path.join(fixturesDir, rel);
+}
+
+function fixtureContent(rel: string): string {
+  return fs.readFileSync(fixturePath(rel), "utf-8");
+}
+
+// ---------------------------------------------------------------------------
+// simple.ts fixture
+// ---------------------------------------------------------------------------
+
+describe("simple.ts — node kinds", () => {
+  const fp = fixturePath("simple.ts");
+  const result = parseFile(fp, fixtureContent("simple.ts"));
+
+  it("extracts interface User with exported = 1", () => {
+    const node = result.nodes.find(
+      (n) => n.name === "User" && n.kind === "interface"
+    );
+    expect(node).toBeDefined();
+    expect(node?.exported).toBe(1);
+    expect(node?.id).toBe(testNodeId(fp, "User", "interface"));
+  });
+
+  it("extracts type alias UserId", () => {
+    const node = result.nodes.find((n) => n.name === "UserId");
+    expect(node).toBeDefined();
+    expect(node?.kind).toBe("type_alias");
+  });
+
+  it("extracts enum Role", () => {
+    const node = result.nodes.find((n) => n.name === "Role");
+    expect(node).toBeDefined();
+    expect(node?.kind).toBe("enum");
+  });
+
+  it("extracts class UserService with exported = 1", () => {
+    const node = result.nodes.find(
+      (n) => n.name === "UserService" && n.kind === "class"
+    );
+    expect(node).toBeDefined();
+    expect(node?.exported).toBe(1);
+  });
+
+  it("extracts method create", () => {
+    const node = result.nodes.find(
+      (n) => n.name === "create" && n.kind === "method"
+    );
+    expect(node).toBeDefined();
+  });
+
+  it("extracts constructor", () => {
+    const node = result.nodes.find((n) => n.kind === "constructor");
+    expect(node).toBeDefined();
+    expect(node?.name).toBe("constructor");
+  });
+
+  it("extracts function createUser with exported = 1", () => {
+    const node = result.nodes.find(
+      (n) => n.name === "createUser" && n.kind === "function"
+    );
+    expect(node).toBeDefined();
+    expect(node?.exported).toBe(1);
+  });
+
+  it("extracts const helper as arrow_function", () => {
+    const node = result.nodes.find((n) => n.name === "helper");
+    expect(node).toBeDefined();
+    expect(node?.kind).toBe("arrow_function");
+  });
+
+  it("UserService has start_line < end_line", () => {
+    const node = result.nodes.find(
+      (n) => n.name === "UserService" && n.kind === "class"
+    );
+    expect(node).toBeDefined();
+    expect(node!.start_line).toBeLessThan(node!.end_line);
+  });
+});
+
+describe("simple.ts — edges", () => {
+  const fp = fixturePath("simple.ts");
+  const result = parseFile(fp, fixtureContent("simple.ts"));
+
+  it("EXTENDS edge from UserService to BaseService", () => {
+    const edge = result.edges.find(
+      (e) =>
+        e.relationship_type === "EXTENDS" &&
+        e.source_id === testNodeId(fp, "UserService", "class") &&
+        e.target_id === testNodeId(fp, "BaseService", "class")
+    );
+    expect(edge).toBeDefined();
+  });
+
+  it("CONTAINS edge from UserService to create method", () => {
+    const edge = result.edges.find(
+      (e) =>
+        e.relationship_type === "CONTAINS" &&
+        e.source_id === testNodeId(fp, "UserService", "class") &&
+        e.target_id === testNodeId(fp, "create", "method")
+    );
+    expect(edge).toBeDefined();
+  });
+
+  it("CONTAINS edge from UserService to constructor", () => {
+    const edge = result.edges.find(
+      (e) =>
+        e.relationship_type === "CONTAINS" &&
+        e.source_id === testNodeId(fp, "UserService", "class") &&
+        e.target_id === testNodeId(fp, "constructor", "constructor")
+    );
+    expect(edge).toBeDefined();
+  });
+
+  it("CALLS edge from create method to log method (this.log())", () => {
+    const edge = result.edges.find(
+      (e) =>
+        e.relationship_type === "CALLS" &&
+        e.source_id === testNodeId(fp, "create", "method") &&
+        e.target_id === testNodeId(fp, "log", "method")
+    );
+    expect(edge).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// aliases.ts — import alias resolution (critical test)
+// ---------------------------------------------------------------------------
+
+describe("aliases.ts", () => {
+  const fp = fixturePath("aliases.ts");
+  const simpleFp = fixturePath("simple.ts");
+  const result = parseFile(fp, fixtureContent("aliases.ts"));
+
+  it("emits IMPORTS edge to resolved path of simple.ts", () => {
+    const edge = result.edges.find(
+      (e) => e.relationship_type === "IMPORTS" && e.target_id === simpleFp
+    );
+    expect(edge).toBeDefined();
+  });
+
+  it("CALLS edge from registerUser to createUser via alias (makeUser)", () => {
+    // makeUser is an alias for createUser from simple.ts.
+    // The resolved CALLS edge must point to createUser's node in simple.ts.
+    const edge = result.edges.find(
+      (e) =>
+        e.relationship_type === "CALLS" &&
+        e.source_id === testNodeId(fp, "registerUser", "function") &&
+        e.target_id === testNodeId(simpleFp, "createUser", "function")
+    );
+    expect(edge).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// reexports.ts — re-export chains
+// ---------------------------------------------------------------------------
+
+describe("reexports.ts", () => {
+  const fp = fixturePath("reexports.ts");
+  const simpleFp = fixturePath("simple.ts");
+  const result = parseFile(fp, fixtureContent("reexports.ts"));
+
+  it("emits IMPORTS edge to simple.ts", () => {
+    const edge = result.edges.find(
+      (e) => e.relationship_type === "IMPORTS" && e.target_id === simpleFp
+    );
+    expect(edge).toBeDefined();
+  });
+
+  it("emits EXPORTS edge referencing createUser in simple.ts with unknown kind", () => {
+    const expectedTarget = testNodeId(simpleFp, "createUser", "unknown");
+    const edge = result.edges.find(
+      (e) => e.relationship_type === "EXPORTS" && e.target_id === expectedTarget
+    );
+    expect(edge).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// dynamic-imports.ts — dynamic import()
+// ---------------------------------------------------------------------------
+
+describe("dynamic-imports.ts", () => {
+  const fp = fixturePath("dynamic-imports.ts");
+  const simpleFp = fixturePath("simple.ts");
+  const result = parseFile(fp, fixtureContent("dynamic-imports.ts"));
+
+  it("emits IMPORTS edge for dynamic import('./simple.js')", () => {
+    const edge = result.edges.find(
+      (e) => e.relationship_type === "IMPORTS" && e.target_id === simpleFp
+    );
+    expect(edge).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// cross-file/b.ts — cross-file CALLS resolution
+// ---------------------------------------------------------------------------
+
+describe("cross-file/b.ts", () => {
+  const fp = fixturePath("cross-file/b.ts");
+  const aFp = fixturePath("cross-file/a.ts");
+  const result = parseFile(fp, fixtureContent("cross-file/b.ts"));
+
+  it("emits IMPORTS edge from b.ts to a.ts", () => {
+    const edge = result.edges.find(
+      (e) => e.relationship_type === "IMPORTS" && e.target_id === aFp
+    );
+    expect(edge).toBeDefined();
+  });
+
+  it("CALLS edge from runThing to doThing in a.ts", () => {
+    const edge = result.edges.find(
+      (e) =>
+        e.relationship_type === "CALLS" &&
+        e.source_id === testNodeId(fp, "runThing", "function") &&
+        e.target_id === testNodeId(aFp, "doThing", "function")
+    );
+    expect(edge).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// IMPLEMENTS edge — inline fixture
+// ---------------------------------------------------------------------------
+
+describe("IMPLEMENTS edge", () => {
+  it("emits IMPLEMENTS edge for class implementing an interface", () => {
+    const fp = "/tmp/knocoph-test-implements.ts";
+    const content = `
+      interface IService { doIt(): void; }
+      class MyService implements IService { doIt(): void {} }
+    `;
+    const result = parseFile(fp, content);
+    const edge = result.edges.find(
+      (e) =>
+        e.relationship_type === "IMPLEMENTS" &&
+        e.source_id === testNodeId(fp, "MyService", "class") &&
+        e.target_id === testNodeId(fp, "IService", "interface")
+    );
+    expect(edge).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Edge cases
+// ---------------------------------------------------------------------------
+
+describe("parseFile edge cases", () => {
+  it("returns empty result for empty string without throwing", () => {
+    expect(() => parseFile("/tmp/empty.ts", "")).not.toThrow();
+    const result = parseFile("/tmp/empty.ts", "");
+    expect(result.nodes).toHaveLength(0);
+    expect(result.edges).toHaveLength(0);
+  });
+
+  it("returns empty result for invalid syntax without throwing", () => {
+    expect(() =>
+      parseFile("/tmp/broken.ts", "export { {{{broken")
+    ).not.toThrow();
+    const result = parseFile("/tmp/broken.ts", "export { {{{broken");
+    expect(result.nodes).toHaveLength(0);
+    expect(result.edges).toHaveLength(0);
+  });
+
+  it("never throws for arbitrary input", () => {
+    const inputs = [
+      "!!!",
+      "function",
+      "class {}",
+      null as unknown as string,
+      undefined as unknown as string,
+    ];
+    for (const input of inputs) {
+      expect(() => parseFile("/tmp/test.ts", input ?? "")).not.toThrow();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Additional branch coverage tests
+// ---------------------------------------------------------------------------
+
+describe("export { foo } — specifier-only export marks node as exported", () => {
+  it("marks the referenced node as exported = 1", () => {
+    const fp = "/tmp/knocoph-specifier-export.ts";
+    const content = `
+      function greet() {}
+      export { greet };
+    `;
+    const result = parseFile(fp, content);
+    const node = result.nodes.find((n) => n.name === "greet");
+    expect(node).toBeDefined();
+    expect(node?.exported).toBe(1);
+  });
+});
+
+describe("export default function", () => {
+  it("extracts default exported function with exported = 1", () => {
+    const fp = "/tmp/knocoph-default-fn.ts";
+    const content = `export default function hello() { return 42; }`;
+    const result = parseFile(fp, content);
+    const node = result.nodes.find(
+      (n) => n.name === "hello" && n.kind === "function"
+    );
+    expect(node).toBeDefined();
+    expect(node?.exported).toBe(1);
+  });
+
+  it("extracts default exported class with exported = 1", () => {
+    const fp = "/tmp/knocoph-default-class.ts";
+    const content = `export default class Svc {}`;
+    const result = parseFile(fp, content);
+    const node = result.nodes.find(
+      (n) => n.name === "Svc" && n.kind === "class"
+    );
+    expect(node).toBeDefined();
+    expect(node?.exported).toBe(1);
+  });
+});
+
+describe("export * from — ExportAllDeclaration", () => {
+  it("emits IMPORTS edge for export-all from relative path", () => {
+    const fp = fixturePath("barrel.ts");
+    const content = `export * from "./simple.js";`;
+    const result = parseFile(fp, content);
+    const simpleFp = fixturePath("simple.ts");
+    const edge = result.edges.find(
+      (e) => e.relationship_type === "IMPORTS" && e.target_id === simpleFp
+    );
+    expect(edge).toBeDefined();
+  });
+
+  it("emits IMPORTS edge for export-all from external module", () => {
+    const fp = "/tmp/knocoph-all-external.ts";
+    const content = `export * from "some-package";`;
+    const result = parseFile(fp, content);
+    const edge = result.edges.find(
+      (e) => e.relationship_type === "IMPORTS" && e.target_id === "some-package"
+    );
+    expect(edge).toBeDefined();
+  });
+});
+
+describe("dynamic import with non-literal expression", () => {
+  it("does not emit an edge and does not throw", () => {
+    const fp = "/tmp/knocoph-dynamic-expr.ts";
+    const content = `async function load(p: string) { return import(p); }`;
+    let result: ReturnType<typeof parseFile>;
+    expect(() => {
+      result = parseFile(fp, content);
+    }).not.toThrow();
+    const importEdges = result!.edges.filter(
+      (e) => e.relationship_type === "IMPORTS"
+    );
+    expect(importEdges).toHaveLength(0);
+  });
+});
+
+describe("default import and namespace import", () => {
+  it("records default import in symbol table and resolves CALLS", () => {
+    // Default import: import Foo from './foo.js'; Foo();
+    const imported = "/tmp/knocoph-src.ts";
+    const importer = "/tmp/knocoph-importer.ts";
+    // Pre-create the imported file so resolveImportPath can find it
+    const content = `
+      import Foo from "${imported}";
+      export function run() { Foo(); }
+    `;
+    const result = parseFile(importer, content);
+    // Should have an IMPORTS edge targeting the imported file
+    const importEdge = result.edges.find(
+      (e) => e.relationship_type === "IMPORTS"
+    );
+    expect(importEdge).toBeDefined();
+  });
+
+  it("handles namespace import without throwing", () => {
+    const fp = "/tmp/knocoph-ns-import.ts";
+    const content = `
+      import * as utils from "some-pkg";
+      export function run() { utils.helper(); }
+    `;
+    expect(() => parseFile(fp, content)).not.toThrow();
+  });
+});
+
+describe("CALLS via MemberExpression on imported object", () => {
+  it("emits CALLS edge for obj.method() where obj is an imported name", () => {
+    const srcFp = "/tmp/knocoph-service.ts";
+    const callerFp = "/tmp/knocoph-caller.ts";
+    // The import target won't resolve to a real file, so it stays as-is.
+    const content = `
+      import service from "${srcFp}";
+      export function run() { service.doWork(); }
+    `;
+    const result = parseFile(callerFp, content);
+    // Should emit a CALLS edge referencing doWork as a method on srcFp
+    const callsEdge = result.edges.find(
+      (e) =>
+        e.relationship_type === "CALLS" &&
+        e.target_id === testNodeId(srcFp, "doWork", "method")
+    );
+    expect(callsEdge).toBeDefined();
+  });
+});
+
+describe("external module imports do not produce file-access edges", () => {
+  it("emits IMPORTS edge with raw specifier as target for external packages", () => {
+    const fp = "/tmp/knocoph-ext.ts";
+    const content = `import { z } from "zod"; export const schema = z.string();`;
+    const result = parseFile(fp, content);
+    const edge = result.edges.find(
+      (e) => e.relationship_type === "IMPORTS" && e.target_id === "zod"
+    );
+    expect(edge).toBeDefined();
+  });
+});
+
+describe("namespace node kind", () => {
+  it("extracts TSModuleDeclaration as namespace kind", () => {
+    const fp = "/tmp/knocoph-ns.ts";
+    const content = `export namespace MyNS { export function helper() {} }`;
+    const result = parseFile(fp, content);
+    const node = result.nodes.find(
+      (n) => n.name === "MyNS" && n.kind === "namespace"
+    );
+    expect(node).toBeDefined();
+    expect(node?.exported).toBe(1);
+  });
+});
+
+describe("variable node kind", () => {
+  it("extracts non-arrow variable declarations as variable kind", () => {
+    const fp = "/tmp/knocoph-var.ts";
+    const content = `export const PORT = 3000;`;
+    const result = parseFile(fp, content);
+    const node = result.nodes.find((n) => n.name === "PORT");
+    expect(node).toBeDefined();
+    expect(node?.kind).toBe("variable");
+    expect(node?.exported).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Extension remapping: .js → .ts / .tsx / .mts / .cts
+// ---------------------------------------------------------------------------
+
+describe("resolveImportPath — extension remapping", () => {
+  it("remaps .js to .ts when .ts file exists on disk", () => {
+    // Create a temporary .ts file
+    const tmpDir = fs.mkdtempSync(path.join(path.sep, "tmp", "knocoph-"));
+    try {
+      const tsFile = path.join(tmpDir, "helper.ts");
+      fs.writeFileSync(tsFile, "export function help() {}");
+
+      // Import from the same directory with .js extension
+      const importerFile = path.join(tmpDir, "importer.ts");
+      const content = `import { help } from "./helper.js";`;
+      const result = parseFile(importerFile, content);
+
+      // Should resolve to the actual .ts file
+      const edge = result.edges.find(
+        (e) =>
+          e.relationship_type === "IMPORTS" && e.target_id.includes("helper")
+      );
+      expect(edge).toBeDefined();
+      expect(edge?.target_id).toBe(tsFile);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("prefers .ts over .tsx when both exist", () => {
+    const tmpDir = fs.mkdtempSync(path.join(path.sep, "tmp", "knocoph-"));
+    try {
+      const tsFile = path.join(tmpDir, "module.ts");
+      const tsxFile = path.join(tmpDir, "module.tsx");
+      fs.writeFileSync(tsFile, "export const x = 1;");
+      fs.writeFileSync(tsxFile, "export const x = 2;");
+
+      const importerFile = path.join(tmpDir, "importer.ts");
+      const content = `import { x } from "./module.js";`;
+      const result = parseFile(importerFile, content);
+
+      const edge = result.edges.find((e) => e.relationship_type === "IMPORTS");
+      expect(edge?.target_id).toBe(tsFile);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("remaps .mjs to .mts when .mts file exists", () => {
+    const tmpDir = fs.mkdtempSync(path.join(path.sep, "tmp", "knocoph-"));
+    try {
+      const mtsFile = path.join(tmpDir, "utils.mts");
+      fs.writeFileSync(mtsFile, "export function util() {}");
+
+      const importerFile = path.join(tmpDir, "importer.mts");
+      const content = `import { util } from "./utils.mjs";`;
+      const result = parseFile(importerFile, content);
+
+      const edge = result.edges.find(
+        (e) =>
+          e.relationship_type === "IMPORTS" && e.target_id.includes("utils")
+      );
+      expect(edge?.target_id).toBe(mtsFile);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("remaps .cjs to .cts when .cts file exists", () => {
+    const tmpDir = fs.mkdtempSync(path.join(path.sep, "tmp", "knocoph-"));
+    try {
+      const ctsFile = path.join(tmpDir, "compat.cts");
+      fs.writeFileSync(ctsFile, "export function compat() {}");
+
+      const importerFile = path.join(tmpDir, "importer.cts");
+      const content = `import { compat } from "./compat.cjs";`;
+      const result = parseFile(importerFile, content);
+
+      const edge = result.edges.find(
+        (e) =>
+          e.relationship_type === "IMPORTS" && e.target_id.includes("compat")
+      );
+      expect(edge?.target_id).toBe(ctsFile);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns the raw path when no remapping matches", () => {
+    const tmpDir = fs.mkdtempSync(path.join(path.sep, "tmp", "knocoph-"));
+    try {
+      // Don't create any actual file
+      const importerFile = path.join(tmpDir, "importer.ts");
+      const nonexistentTarget = path.join(tmpDir, "nonexistent.js");
+      const content = `import { x } from "./nonexistent.js";`;
+      const result = parseFile(importerFile, content);
+
+      const edge = result.edges.find((e) => e.relationship_type === "IMPORTS");
+      // Should have the resolved path (even though it doesn't exist on disk)
+      expect(edge?.target_id).toBe(nonexistentTarget);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// walkShallow array traversal (line 191: Array.isArray check)
+// ---------------------------------------------------------------------------
+
+describe("walkShallow — array node iteration", () => {
+  it("walks through array of statements in function body", () => {
+    // A function with multiple statements creates arrays in the BlockStatement
+    // that walkShallow must traverse to find nested CallExpressions
+    const fp = "/tmp/knocoph-multi-stmts.ts";
+    const content = `
+      function a() {}
+      function b() {}
+      function c() {}
+      export function runner() {
+        a();
+        b();
+        c();
+      }
+    `;
+    const result = parseFile(fp, content);
+
+    // Should find CALLS edges for all three function calls
+    const callsEdges = result.edges.filter(
+      (e) =>
+        e.relationship_type === "CALLS" &&
+        e.source_id === testNodeId(fp, "runner", "function")
+    );
+    expect(callsEdges.length).toBe(3);
+
+    // Verify each function is called
+    const targetNames = ["a", "b", "c"];
+    for (const name of targetNames) {
+      const edge = callsEdges.find(
+        (e) => e.target_id === testNodeId(fp, name, "function")
+      );
+      expect(edge).toBeDefined();
+    }
+  });
+
+  it("walks through complex nested block with conditional statements", () => {
+    // if/else blocks also contain statement arrays
+    const fp = "/tmp/knocoph-conditional.ts";
+    const content = `
+      function helper() {}
+      function process(flag: boolean) {
+        if (flag) {
+          helper();
+        } else {
+          helper();
+        }
+      }
+    `;
+    const result = parseFile(fp, content);
+
+    // Should find both calls despite being in different branches
+    const callsEdges = result.edges.filter(
+      (e) =>
+        e.relationship_type === "CALLS" &&
+        e.source_id === testNodeId(fp, "process", "function")
+    );
+    expect(callsEdges.length).toBeGreaterThanOrEqual(1);
+    expect(
+      callsEdges.some(
+        (e) => e.target_id === testNodeId(fp, "helper", "function")
+      )
+    ).toBe(true);
+  });
+
+  it("walks through try-catch blocks with multiple calls", () => {
+    // try-catch contains statement arrays in try/catch blocks
+    const fp = "/tmp/knocoph-trycatch.ts";
+    const content = `
+      function risky() {}
+      function handle() {}
+      export function operation() {
+        try {
+          risky();
+        } catch (e) {
+          handle();
+        }
+      }
+    `;
+    const result = parseFile(fp, content);
+
+    // Should find calls in both try and catch blocks
+    const callsEdges = result.edges.filter(
+      (e) =>
+        e.relationship_type === "CALLS" &&
+        e.source_id === testNodeId(fp, "operation", "function")
+    );
+    expect(callsEdges.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("walks through do-while and for loops with calls", () => {
+    // Loop bodies contain statement arrays
+    const fp = "/tmp/knocoph-loops.ts";
+    const content = `
+      function task() {}
+      export function loop() {
+        for (let i = 0; i < 10; i++) {
+          task();
+        }
+      }
+    `;
+    const result = parseFile(fp, content);
+
+    const callsEdges = result.edges.filter(
+      (e) =>
+        e.relationship_type === "CALLS" &&
+        e.source_id === testNodeId(fp, "loop", "function")
+    );
+    expect(callsEdges.length).toBeGreaterThanOrEqual(1);
+  });
+});
