@@ -306,17 +306,14 @@ function collectCallEdges(
 // ---------------------------------------------------------------------------
 
 export function parseFile(filePath: string, content: string): ParsedFile {
-  let ast: TSESTree.Program;
-  try {
-    ast = parse(content, {
-      jsx: true,
-      loc: true,
-      comment: false,
-      range: false,
-    });
-  } catch {
-    return { nodes: [], edges: [] };
-  }
+  // Let parse errors propagate to the caller (indexer), which catches them and
+  // records the file as status 'error' without writing partial data (section 9.1).
+  const ast: TSESTree.Program = parse(content, {
+    jsx: true,
+    loc: true,
+    comment: false,
+    range: false,
+  });
 
   const symbolTable = buildSymbolTable(ast, filePath);
   const nodes: ParsedNode[] = [];

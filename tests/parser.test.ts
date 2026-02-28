@@ -277,26 +277,23 @@ describe("parseFile edge cases", () => {
     expect(result.edges).toHaveLength(0);
   });
 
-  it("returns empty result for invalid syntax without throwing", () => {
-    expect(() =>
-      parseFile("/tmp/broken.ts", "export { {{{broken")
-    ).not.toThrow();
-    const result = parseFile("/tmp/broken.ts", "export { {{{broken");
-    expect(result.nodes).toHaveLength(0);
-    expect(result.edges).toHaveLength(0);
+  it("throws for invalid TypeScript syntax", () => {
+    // Parse errors propagate so the indexer can catch them and record status
+    // 'error' without writing partial data (see implementation plan section 9.1).
+    expect(() => parseFile("/tmp/broken.ts", "export { {{{broken")).toThrow();
   });
 
-  it("never throws for arbitrary input", () => {
-    const inputs = [
-      "!!!",
-      "function",
-      "class {}",
-      null as unknown as string,
-      undefined as unknown as string,
-    ];
-    for (const input of inputs) {
-      expect(() => parseFile("/tmp/test.ts", input ?? "")).not.toThrow();
+  it("throws for syntax-invalid input", () => {
+    // Parse errors propagate so the indexer can return status 'error' without
+    // writing partial data. Empty string is valid (empty module) and does not throw.
+    const invalid = ["!!!", "function", "class {}"];
+    for (const input of invalid) {
+      expect(() => parseFile("/tmp/test.ts", input)).toThrow();
     }
+  });
+
+  it("does not throw for empty string (valid empty module)", () => {
+    expect(() => parseFile("/tmp/empty.ts", "")).not.toThrow();
   });
 });
 
