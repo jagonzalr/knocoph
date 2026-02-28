@@ -4,6 +4,7 @@ import Database from "better-sqlite3";
 import { SCHEMA_SQL } from "../src/db.js";
 import { insertEdge, insertFile, insertNode } from "../src/graph.js";
 import {
+  codebaseOverview,
   explainImpact,
   findSymbol,
   getNeighbors,
@@ -617,5 +618,161 @@ describe("queryArchitecture", () => {
     const result = queryArchitecture(db, FILE_Z, false);
     expect(result.defined_symbols).toHaveLength(0);
     expect(result.cross_file_edges).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// codebaseOverview
+// ---------------------------------------------------------------------------
+
+describe("codebaseOverview", () => {
+  it("returns all-zero counts and empty arrays on an empty DB", () => {
+    const db = makeDb();
+    const result = codebaseOverview(db);
+    expect(result.file_count).toBe(0);
+    expect(result.node_count).toBe(0);
+    expect(result.edge_count).toBe(0);
+    expect(result.node_kinds).toHaveLength(0);
+    expect(result.edge_types).toHaveLength(0);
+    expect(result.top_called).toHaveLength(0);
+    expect(result.top_imported).toHaveLength(0);
+    expect(result.entry_points).toHaveLength(0);
+  });
+
+  it("returns correct counts and top_called for a seeded DB", () => {
+    const db = makeDb();
+
+    const FILE_A = "/overview/a.ts";
+    const FILE_B = "/overview/b.ts";
+    insertFile(db, FILE_A, "hash-ov-a");
+    insertFile(db, FILE_B, "hash-ov-b");
+
+    // 3 nodes in FILE_A
+    const fnFoo: ParsedNode = {
+      id: "ov-foo",
+      name: "foo",
+      kind: "function",
+      file_path: FILE_A,
+      start_line: 1,
+      end_line: 3,
+      exported: 1,
+    };
+    const fnBar: ParsedNode = {
+      id: "ov-bar",
+      name: "bar",
+      kind: "function",
+      file_path: FILE_A,
+      start_line: 5,
+      end_line: 7,
+      exported: 0,
+    };
+    // 2 nodes in FILE_B
+    const fnBaz: ParsedNode = {
+      id: "ov-baz",
+      name: "baz",
+      kind: "function",
+      file_path: FILE_B,
+      start_line: 1,
+      end_line: 2,
+      exported: 1,
+    };
+    const clsMyClass: ParsedNode = {
+      id: "ov-myclass",
+      name: "MyClass",
+      kind: "class",
+      file_path: FILE_B,
+      start_line: 4,
+      end_line: 10,
+      exported: 1,
+    };
+    insertNode(db, fnFoo);
+    insertNode(db, fnBar);
+    insertNode(db, fnBaz);
+    insertNode(db, clsMyClass);
+
+    // 3 CALLS edges: foo <- bar (bar calls foo), foo <- baz (baz calls foo), myclass <- bar
+    const edgeBarCallsFoo: ParsedEdge = {
+      source_id: "ov-bar",
+      target_id: "ov-foo",
+      relationship_type: "CALLS",
+    };
+    const edgeBazCallsFoo: ParsedEdge = {
+      source_id: "ov-baz",
+      target_id: "ov-foo",
+      relationship_type: "CALLS",
+    };
+    const edgeBarCallsMyClass: ParsedEdge = {
+      source_id: "ov-bar",
+      target_id: "ov-myclass",
+      relationship_type: "CALLS",
+    };
+    insertEdge(db, edgeBarCallsFoo);
+    insertEdge(db, edgeBazCallsFoo);
+    insertEdge(db, edgeBarCallsMyClass);
+
+    const result = codebaseOverview(db);
+
+    // Counts
+    expect(result.file_count).toBe(2);
+    expect(result.node_count).toBe(4);
+    expect(result.edge_count).toBe(3);
+
+    // node_kinds: function(3) and class(1)
+    expect(result.node_kinds).toHaveLength(2);
+    expect(result.node_kinds[0]).toMatchObject({ kind: "function", count: 3 });
+    expect(result.node_kinds[1]).toMatchObject({ kind: "class", count: 1 });
+
+    // edge_types: CALLS(3)
+    expect(result.edge_types).toHaveLength(1);
+    expect(result.edge_types[0]).toMatchObject({
+      relationship_type: "CALLS",
+      count: 3,
+    });
+
+    // top_called: foo has 2 incoming CALLS, myclass has 1
+    expect(result.top_called).toHaveLength(2);
+    expect(result.top_called[0]).toMatchObject({
+      id: "ov-foo",
+      name: "foo",
+      caller_count: 2,
+    });
+    expect(result.top_called[1]).toMatchObject({
+      id: "ov-myclass",
+      name: "MyClass",
+      caller_count: 1,
+    });
+
+    // entry_points: exported nodes with no incoming CALLS
+    // foo and myclass both receive CALLS, so they are NOT entry points.
+    // baz is exported and has no incoming CALLS -> entry point.
+    // bar is not exported -> not an entry point.
+    const epIds = result.entry_points.map((n) => n.id);
+    expect(epIds).toContain("ov-baz");
+    expect(epIds).not.toContain("ov-foo");
+    expect(epIds).not.toContain("ov-bar");
+    expect(epIds).not.toContain("ov-myclass");
+  });
+
+  it("caps entry_points at 20 rows", () => {
+    const db = makeDb();
+    const FILE_EP = "/overview/ep.ts";
+    insertFile(db, FILE_EP, "hash-ov-ep");
+
+    // Seed 25 exported nodes with no callers
+    for (let i = 0; i < 25; i++) {
+      const node: ParsedNode = {
+        id: `ep-node-${i}`,
+        name: `epFn${i}`,
+        kind: "function",
+        file_path: FILE_EP,
+        start_line: i * 2 + 1,
+        end_line: i * 2 + 2,
+        exported: 1,
+      };
+      insertNode(db, node);
+    }
+
+    const result = codebaseOverview(db);
+    expect(result.entry_points).toHaveLength(20);
   });
 });

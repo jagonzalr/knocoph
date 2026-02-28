@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type Database from "better-sqlite3";
 
+import * as codebaseOverview from "./tools/codebase-overview.js";
 import * as explainImpact from "./tools/explain-impact.js";
 import * as findSymbol from "./tools/find-symbol.js";
 import * as getNeighbors from "./tools/get-neighbors.js";
@@ -22,6 +23,7 @@ export function createServer(db: Database.Database): McpServer {
   getSnippet.register(server, db);
   queryArch.register(server, db);
   indexProject.register(server, db);
+  codebaseOverview.register(server, db);
 
   return server;
 }

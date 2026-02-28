@@ -21,6 +21,7 @@ gives faster, more accurate structural answers and uses far fewer context tokens
 
 | Question                               | Tool                                               |
 | -------------------------------------- | -------------------------------------------------- |
+| Overview of symbols and relationships? | `codebase_overview { }`                            |
 | Where is `UserService` defined?        | `find_symbol { name: "UserService" }`              |
 | What does `UserService` call?          | `get_neighbors { node_id, direction: "outgoing" }` |
 | What calls `UserService`?              | `get_neighbors { node_id, direction: "incoming" }` |
