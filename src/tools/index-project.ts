@@ -51,6 +51,11 @@ export function register(server: McpServer, db: Database.Database): void {
           JSON.stringify(input.ignore)
         );
 
+        console.error(
+          `[knocoph] Starting file watcher on ${absoluteRoot}...`,
+          input.globs
+        );
+
         startWatcher(db, absoluteRoot, input.globs, input.ignore);
 
         const summary = `Indexed ${stats.files_scanned} file(s) in ${stats.duration_ms}ms: ${stats.files_updated} updated, ${stats.files_skipped} unchanged, ${stats.files_errored} error(s).`;

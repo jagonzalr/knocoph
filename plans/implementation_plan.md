@@ -1089,7 +1089,7 @@ PR-1 -> PR-2 -> PR-3 -> PR-4 -> PR-5 -> PR-6 -> PR-7 -> PR-8
 
 ---
 
-### PR-1: Project Scaffolding
+### PR-1: Project Scaffolding ✅
 
 **Goal.** A compilable TypeScript project with correct configuration. `tsc` produces output. Vitest runs with zero tests and zero failures. Linting passes. No implementation code yet.
 
@@ -1136,7 +1136,7 @@ PR-1 -> PR-2 -> PR-3 -> PR-4 -> PR-5 -> PR-6 -> PR-7 -> PR-8
 
 ---
 
-### PR-2: Database Layer
+### PR-2: Database Layer ✅
 
 **Goal.** SQLite schema bootstrap with WAL mode and CASCADE delete proven correct by in-memory database tests.
 
@@ -1183,7 +1183,7 @@ PR-1 -> PR-2 -> PR-3 -> PR-4 -> PR-5 -> PR-6 -> PR-7 -> PR-8
 
 ---
 
-### PR-3: Parser
+### PR-3: Parser ✅
 
 **Goal.** A pure parsing function with no database dependency. Extracts correct nodes and edges from TypeScript source including import aliases, re-exports, and dynamic imports. Proven by fixture-based tests.
 
@@ -1321,7 +1321,7 @@ PR-1 -> PR-2 -> PR-3 -> PR-4 -> PR-5 -> PR-6 -> PR-7 -> PR-8
 
 ---
 
-### PR-4: Indexer
+### PR-4: Indexer ✅
 
 **Goal.** Hash-based skip and incremental update pipeline. Integration-tested against real temporary directories.
 
@@ -1393,7 +1393,7 @@ PR-1 -> PR-2 -> PR-3 -> PR-4 -> PR-5 -> PR-6 -> PR-7 -> PR-8
 
 ---
 
-### PR-5: Query Layer
+### PR-5: Query Layer ✅
 
 **Goal.** All read-side SQL in one module. Recursive CTEs with cycle and depth protection proven by seeded-data tests with known graph structures.
 
@@ -1464,7 +1464,7 @@ PR-1 -> PR-2 -> PR-3 -> PR-4 -> PR-5 -> PR-6 -> PR-7 -> PR-8
 
 ---
 
-### PR-6: MCP Tool Handlers
+### PR-6: MCP Tool Handlers ✅
 
 **Goal.** Wire query functions and indexer to MCP tool definitions. Each tool: Zod schema, one function call, one summary string, JSON return. Zero business logic in tool files.
 
@@ -1551,7 +1551,7 @@ PR-1 -> PR-2 -> PR-3 -> PR-4 -> PR-5 -> PR-6 -> PR-7 -> PR-8
 
 ---
 
-### PR-7: Server, Watcher, and Entry Point
+### PR-7: Server, Watcher, and Entry Point ✅
 
 **Goal.** All modules wired into a running MCP server that auto-starts the file watcher and connects the stdio transport.
 
@@ -1723,7 +1723,7 @@ PR-1 -> PR-2 -> PR-3 -> PR-4 -> PR-5 -> PR-6 -> PR-7 -> PR-8
 
 ---
 
-### PR-8: End-to-End Verification and CLAUDE.md Update
+### PR-8: End-to-End Verification and CLAUDE.md Update ✅
 
 **Goal.** All 7 tools work correctly in a real TypeScript project. `CLAUDE.md` is updated with behavioral guidance. The tool is usable.
 
@@ -1776,7 +1776,7 @@ Complete and validate all v1 PRs before starting any of these. "Validate" means 
 
 ---
 
-### PR-V2-1: REFERENCES Edge Type
+### PR-V2-1: REFERENCES Edge Type ✅
 
 **Goal.** Track type annotation usages and non-call variable references. Completes blast radius analysis for non-call dependencies.
 
@@ -1795,7 +1795,7 @@ Complete and validate all v1 PRs before starting any of these. "Validate" means 
 
 ---
 
-### PR-V2-2: Codebase Overview Tool
+### PR-V2-2: Codebase Overview Tool ✅
 
 **Goal.** Expose a single `codebase_overview` tool that returns a structural summary of the entire indexed codebase from the DB. Replaces the need for an AI to call `query_architecture` on every file just to orient itself in an unfamiliar project.
 
@@ -1988,7 +1988,7 @@ When set:
 
 ---
 
-### PR-V2-5: Cross-File Ripple Invalidation
+### PR-V2-5: Cross-File Ripple Invalidation ✅
 
 **Goal.** When file A changes, re-index all files that directly import A.
 
@@ -2260,7 +2260,7 @@ After implementing these changes, the behavioral guidance in section 14 should b
 
 ---
 
-### PR-V2-6: Tool Consolidation
+### PR-V2-6: Tool Consolidation ✅
 
 **Goal.** Reduce average tool calls per question from 2–3 to 1 by adding name-based resolution, merging `why_is_this_used` into `explain_impact`, and adding `include_snippet` to `find_symbol`. Drop from 8 → 7 tools.
 

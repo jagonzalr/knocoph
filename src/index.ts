@@ -51,6 +51,7 @@ if (
   console.error(
     `[knocoph] Re-index complete: ${stats.files_updated} updated, ${stats.files_skipped} unchanged in ${stats.duration_ms}ms`
   );
+
   startWatcher(db, rootDir, globs, ignore);
 } else {
   // Fresh installation — no previous index_project run found in meta.

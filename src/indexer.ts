@@ -145,7 +145,7 @@ export function indexProject(
     else stats.files_errored++;
 
     if (stats.files_scanned % 100 === 0) {
-      console.error("[Knocoph] Indexed", stats.files_scanned, "...");
+      console.error("[knocoph] Indexed", stats.files_scanned, "...");
     }
   }
 

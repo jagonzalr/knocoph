@@ -419,3 +419,23 @@ export function queryArchitecture(
 
   return { defined_symbols, cross_file_edges };
 }
+
+// getImportersOf — return files that directly import the given file.
+// Used for ripple invalidation when a file changes.
+export function getImportersOf(
+  db: Database.Database,
+  filePath: string
+): string[] {
+  const importers = db
+    .prepare(
+      `SELECT DISTINCT n.file_path
+       FROM nodes n
+       JOIN edges e ON e.source_id = n.id
+       WHERE e.target_id = ?
+         AND e.relationship_type = 'IMPORTS'
+       ORDER BY n.file_path`
+    )
+    .all(filePath) as { file_path: string }[];
+
+  return importers.map((row) => row.file_path);
+}
