@@ -1,5 +1,13 @@
 # knocoph
 
+## 1.3.0
+
+### Minor Changes
+
+- 2c74df9: Cross-File Ripple Invalidation
+
+  When file A changes, re-index all files that directly import A.
+
 ## 1.2.0
 
 ### Minor Changes
