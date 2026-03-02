@@ -2067,4 +2067,272 @@ have not changed are skipped instantly.
 
 ---
 
+## 15. Tool Consolidation — Reducing Multi-Call Overhead
+
+**Last revised:** 2026-03-02
+
+### Problem Statement
+
+Knocoph's stated goal is to reduce token consumption by replacing file-reading with graph queries. But in practice, the current 8-tool surface forces LLMs into multi-call chains that partially negate the token savings. When a user asks "what breaks if I change `createUser`?", the LLM must:
+
+1. `find_symbol({ name: "createUser" })` — to get the `node_id`
+2. `explain_impact({ node_id: "..." })` — to get the blast radius
+3. Sometimes `get_neighbors({ node_id: "..." })` — to see immediate edges
+4. Sometimes `query_architecture({ file_path: "..." })` — to understand file context
+
+That is 2–4 tool calls for a single question. Each call is a full JSON-RPC round trip, each response consumes output tokens, and the LLM must synthesize across calls — which itself burns reasoning tokens.
+
+### Root Cause Analysis
+
+The multi-call pattern exists for two structural reasons:
+
+**1. `node_id` as the universal identifier.** Five tools (`get_neighbors`, `explain_impact`, `why_is_this_used`, `get_snippet`, `query_architecture`) require identifiers that the user and the LLM do not naturally have. The user thinks in symbol names. The graph stores opaque IDs. `find_symbol` is the bridge — but forcing it as a prerequisite to every other tool is a design tax.
+
+**2. `explain_impact` and `why_is_this_used` are the same traversal.** Both use the identical recursive CTE (incoming edge walk with cycle detection). The only difference is the SELECT clause — one returns a flat deduplicated node list, the other returns per-hop rows. The original plan (section 8, Tool 4) justified separate tools by saying "an LLM in assess-risk mode is different from one in understand-purpose mode." In practice, the LLM does not make that distinction. It calls whichever name sounds closest to the user's question, and often calls both sequentially to piece together a full answer — burning even more tokens.
+
+### Proposed Changes
+
+#### Change 1: Name-based resolution in all node-centric tools
+
+Allow `explain_impact`, `get_neighbors`, and the merged impact tool (see Change 2) to accept `name` + optional `kind` as an **alternative** to `node_id`.
+
+**Resolution logic** (shared helper in `queries.ts`):
+
+```typescript
+export function resolveNode(
+  db: Database.Database,
+  nodeId?: string,
+  name?: string,
+  kind?: NodeKind
+): ParsedNode {
+  if (nodeId) {
+    const node = db.prepare("SELECT * FROM nodes WHERE id = ?").get(nodeId) as
+      | ParsedNode
+      | undefined;
+    if (!node) throw new Error(`Node not found: ${nodeId}`);
+    return node;
+  }
+  if (!name) throw new Error("Either node_id or name must be provided.");
+  const nodes = findSymbol(db, name, kind, true);
+  if (nodes.length === 0)
+    throw new Error(`No symbol found matching '${name}'.`);
+  if (nodes.length > 1)
+    throw new Error(
+      `Ambiguous: ${nodes.length} symbols match '${name}'. ` +
+        `Provide kind or use find_symbol to pick the correct node_id.`
+    );
+  return nodes[0];
+}
+```
+
+Zod schemas for affected tools change from:
+
+```typescript
+{
+  node_id: z.string().min(1);
+}
+```
+
+to:
+
+```typescript
+{
+  node_id: z.string().min(1).optional(),
+  name: z.string().min(1).optional(),
+  kind: z.enum([...]).optional()
+}
+```
+
+With a `.refine()` ensuring at least one of `node_id` or `name` is provided.
+
+**Impact:** The most common 2-call pattern (`find_symbol` → X) becomes a single call. The LLM can call `explain_impact({ name: "createUser" })` directly. `find_symbol` remains available for ambiguous or multi-result lookups.
+
+#### Change 2: Merge `why_is_this_used` into `explain_impact`
+
+Remove the `why_is_this_used` tool entirely. Add an `include_paths` boolean to `explain_impact`:
+
+```typescript
+{
+  node_id: z.string().min(1).optional(),
+  name: z.string().min(1).optional(),
+  kind: z.enum([...]).optional(),
+  max_depth: z.number().int().min(1).max(10).default(5),
+  include_paths: z.boolean().default(true)
+}
+```
+
+When `include_paths` is true (default), the response includes both `affected_nodes` (flat list with depth) and `paths` (per-hop rows). The LLM gets the full picture in one call without deciding upfront which format it needs.
+
+Updated description: `"Blast radius and dependency analysis. Given a symbol (by name or node_id), returns all transitive dependents up to max_depth hops and the dependency paths explaining why each is affected."`
+
+**Why default `include_paths` to true:** The paths add minimal token overhead (they reference the same nodes already in `affected_nodes`), and having them avoids a follow-up call in the majority of cases. The LLM can ignore them if irrelevant.
+
+#### Change 3: Add `include_snippet` to `find_symbol`
+
+```typescript
+{
+  name: z.string().min(1),
+  kind: z.enum([...]).optional(),
+  exact: z.boolean().default(true),
+  include_snippet: z.boolean().default(false),
+  snippet_padding: z.number().int().min(0).max(20).default(2)
+}
+```
+
+When `include_snippet` is true, each returned node includes a `content` field with the source lines (using the same `getFileLines` LRU cache from `get-snippet.ts`). This eliminates the `find_symbol` → `get_snippet` two-call pattern for the most common case.
+
+`get_snippet` remains as a standalone tool for cases where the file/line info comes from a source other than `find_symbol` (e.g., from `explain_impact` results, error messages, or manual line numbers).
+
+### What We Keep, What We Remove
+
+| Tool                 | Action      | Rationale                                              |
+| -------------------- | ----------- | ------------------------------------------------------ |
+| `index_project`      | **Keep**    | Essential. No overlap. Write-side operation.           |
+| `codebase_overview`  | **Keep**    | Essential for orientation. No overlap.                 |
+| `find_symbol`        | **Enhance** | Add `include_snippet` option.                          |
+| `get_neighbors`      | **Enhance** | Accept `name`/`kind` as alternative to `node_id`.      |
+| `explain_impact`     | **Enhance** | Accept `name`/`kind`. Absorb `why_is_this_used` paths. |
+| `why_is_this_used`   | **Remove**  | Merged into `explain_impact` with `include_paths`.     |
+| `get_snippet`        | **Keep**    | Useful standalone for non-`find_symbol` line lookups.  |
+| `query_architecture` | **Keep**    | Unique file-level scope. No overlap.                   |
+
+**Result: 8 → 7 tools.** But the real win is call reduction: average tool calls per user question drops from 2–3 to 1.
+
+### Call Chain Comparison
+
+| User question                                  | Before (calls)                         | After (calls)                                |
+| ---------------------------------------------- | -------------------------------------- | -------------------------------------------- |
+| "What breaks if I change `createUser`?"        | `find_symbol` → `explain_impact` (2)   | `explain_impact({ name })` (1)               |
+| "Where is `UserService` and show me the code?" | `find_symbol` → `get_snippet` (2)      | `find_symbol({ include_snippet: true })` (1) |
+| "What calls `handleRequest`?"                  | `find_symbol` → `get_neighbors` (2)    | `get_neighbors({ name, direction })` (1)     |
+| "Why does `createUser` exist?"                 | `find_symbol` → `why_is_this_used` (2) | `explain_impact({ name })` (1)               |
+| "What does file X export?"                     | `query_architecture` (1)               | `query_architecture` (1)                     |
+| "Overview of the project"                      | `codebase_overview` (1)                | `codebase_overview` (1)                      |
+
+### What We Explicitly Decided NOT To Do
+
+1. **Remove `get_snippet` entirely.** Considered, since `find_symbol` with `include_snippet` covers the primary path. But `get_snippet` is independently useful — `explain_impact` returns nodes with `file_path`/`start_line`/`end_line`, and the LLM may want to read the code of an affected symbol without calling `find_symbol` again. It's also a safety valve for error-driven lookups.
+
+2. **Remove `query_architecture`.** Considered merging into `codebase_overview`. But they answer different questions: `codebase_overview` is project-wide aggregates, `query_architecture` is a file-level detail view. Different scopes, both valuable.
+
+3. **Allow name resolution in `get_snippet`.** `get_snippet` operates on raw file/line coordinates. Adding symbol resolution would make it a second `find_symbol` with content. The cleaner path is `find_symbol({ include_snippet: true })`.
+
+4. **Merge `get_neighbors` into `explain_impact`.** `get_neighbors` with `direction: 'outgoing'` answers "what does X call?" — `explain_impact` only traverses incoming edges. They are genuinely different operations (different traversal directions, different depths). Merging would create an overloaded tool with confusing semantics.
+
+5. **Add a batch/composite "investigate" tool.** Considered a single tool that runs `find_symbol` + `explain_impact` + `get_neighbors` in one shot. Rejected: it would return a large payload for every question, most of which would be irrelevant. The LLM should pick the right tool, not receive everything. Targeted tools with name resolution accomplish the same goal without payload bloat.
+
+### Updated AGENTS.md / CLAUDE.md Tool Guidance
+
+After implementing these changes, the behavioral guidance in section 14 should be updated:
+
+```markdown
+### Rule: graph before files
+
+1. Call `find_symbol` to locate any symbol by name. Use `include_snippet: true`
+   to get the source code in the same call.
+2. Call `get_neighbors` with a symbol `name` or `node_id` to explore what it
+   calls and what calls it, before reading the file it lives in.
+3. Call `explain_impact` with a symbol `name` or `node_id` before modifying any
+   symbol to understand blast radius and dependency paths.
+4. Call `codebase_overview` at the start of any analysis to understand the
+   project's structure, file count, symbol distribution, and top-level architecture.
+5. Call `query_architecture` to understand what symbols a file defines and what
+   it imports/exports before reading the file.
+6. Call `get_snippet` to read specific lines from a file when you have
+   file_path and line numbers from a previous tool result.
+7. Call `index_project` if the graph appears stale after code changes.
+
+### Tool selection guide
+
+| Question                               | Tool                                                           |
+| -------------------------------------- | -------------------------------------------------------------- |
+| Overview of symbols and relationships? | `codebase_overview { }`                                        |
+| Where is `UserService` defined?        | `find_symbol { name: "UserService" }`                          |
+| Show me the body of `create`           | `find_symbol { name: "create", include_snippet: true }`        |
+| What does `UserService` call?          | `get_neighbors { name: "UserService", direction: "outgoing" }` |
+| What calls `UserService`?              | `get_neighbors { name: "UserService", direction: "incoming" }` |
+| What breaks if I change `createUser`?  | `explain_impact { name: "createUser" }`                        |
+| Why does `createUser` exist?           | `explain_impact { name: "createUser" }`                        |
+| What does this file export and import? | `query_architecture { file_path }`                             |
+| Read lines 50-80 of a file             | `get_snippet { file_path, start_line: 50, end_line: 80 }`      |
+| Graph returns empty results            | `index_project { root_dir: "." }`                              |
+```
+
+---
+
+### PR-V2-6: Tool Consolidation
+
+**Goal.** Reduce average tool calls per question from 2–3 to 1 by adding name-based resolution, merging `why_is_this_used` into `explain_impact`, and adding `include_snippet` to `find_symbol`. Drop from 8 → 7 tools.
+
+**Files to modify:**
+
+- `src/queries.ts` — add `resolveNode` helper, add `whyIsThisUsed` logic into `explainImpact` return
+- `src/tools/find-symbol.ts` — add `include_snippet`/`snippet_padding` params, inline snippet logic
+- `src/tools/get-neighbors.ts` — accept `name`/`kind` as alternative to `node_id`
+- `src/tools/explain-impact.ts` — accept `name`/`kind`, add `include_paths` param, merge `whyIsThisUsed` output
+- `src/server.ts` — remove `why_is_this_used` registration
+- `tests/queries.test.ts` — add `resolveNode` tests, update `explainImpact` tests to cover merged paths output
+
+**Files to delete:**
+
+- `src/tools/why-is-this-used.ts`
+
+**Tasks:**
+
+1. Add `resolveNode(db, nodeId?, name?, kind?): ParsedNode` to `src/queries.ts`. Throws if no match or ambiguous. Exact match only (no prefix). This is the shared lookup helper.
+
+2. Update `explainImpact` function signature:
+
+   ```typescript
+   export function explainImpact(
+     db: Database.Database,
+     nodeId: string,
+     maxDepth: number,
+     includePaths: boolean = true
+   ): { affected_nodes: ImpactNode[]; paths: WhyRow[] };
+   ```
+
+   When `includePaths` is true, run both the existing flat CTE and the path CTE. Return both arrays. When false, return `paths: []` to minimize payload.
+
+3. Update `src/tools/explain-impact.ts`:
+   - Zod schema: `node_id` optional, add `name` and `kind` optional, `.refine()` requiring at least one of `node_id`/`name`. Add `include_paths: z.boolean().default(true)`.
+   - Call `resolveNode` to get the node, then call `explainImpact` with the resolved ID.
+   - Updated description: `"Blast radius and dependency analysis. Given a symbol (by name or node_id), returns all transitive dependents and the dependency paths explaining each. Replaces the need for separate find_symbol + explain_impact + why_is_this_used calls."`
+   - Summary: `` `Affects ${result.affected_nodes.length} symbol(s) via ${result.paths.length} path(s) up to depth ${input.max_depth}.` ``
+
+4. Update `src/tools/get-neighbors.ts`:
+   - Zod schema: `node_id` optional, add `name` and `kind` optional, `.refine()` requiring at least one of `node_id`/`name`.
+   - Call `resolveNode` to get the node ID, then call `getNeighbors`.
+   - Description unchanged.
+
+5. Update `src/tools/find-symbol.ts`:
+   - Add `include_snippet: z.boolean().default(false)` and `snippet_padding: z.number().int().min(0).max(20).default(2)`.
+   - When `include_snippet` is true, read source lines for each returned node using the `getFileLines` LRU cache (import from `get-snippet.ts` or extract the cache to a shared module).
+   - Each node in the response gains a `content?: string` field.
+   - Description: `"Locate a symbol by name in the code graph. Returns node id, file path, line range, and optionally the source code. Always call this before opening files."`
+
+6. Remove `why_is_this_used` registration from `src/server.ts`. Delete `src/tools/why-is-this-used.ts`.
+
+7. Update tests:
+   - `tests/queries.test.ts`: Add `resolveNode` describe block: exact match, no match throws, ambiguous throws, kind disambiguates.
+   - `tests/queries.test.ts`: Update `explainImpact` tests to assert both `affected_nodes` and `paths` in the return value.
+   - Existing `whyIsThisUsed` tests in `queries.test.ts` remain — the function stays in `queries.ts` as an internal, it's just no longer exposed as a separate tool. Alternatively, inline the CTE into `explainImpact` and remove the standalone export.
+
+8. Extract `getFileLines` LRU cache from `src/tools/get-snippet.ts` into a shared module `src/file-cache.ts` so both `find-symbol.ts` and `get-snippet.ts` can use it without duplication.
+
+9. Run `npm run test:ci`, `npm run prettier`, `npm run lint`. All must pass.
+
+**Acceptance criteria:**
+
+- `npm run test:ci` passes with 80%+ coverage on modified files
+- `tools/list` returns exactly 7 tools (no `why_is_this_used`)
+- `explain_impact({ name: "someSymbol" })` works without prior `find_symbol` call
+- `get_neighbors({ name: "someSymbol", direction: "outgoing" })` works without prior `find_symbol` call
+- `find_symbol({ name: "someSymbol", include_snippet: true })` returns source content inline
+- `explain_impact` with `include_paths: true` returns both `affected_nodes` and `paths`
+- Ambiguous name resolution returns a clear error message listing the matches
+- AGENTS.md / CLAUDE.md updated with new tool guidance
+
+---
+
 _End of implementation plan._

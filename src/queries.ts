@@ -2,6 +2,36 @@ import type Database from "better-sqlite3";
 
 import type { EdgeType, NodeKind, ParsedEdge, ParsedNode } from "./types.js";
 
+// resolveNode — shared helper for name-based resolution.
+// Accepts either node_id or name (+optional kind). Returns exactly one node.
+// Throws if no match or ambiguous (multiple matches without kind filter).
+export function resolveNode(
+  db: Database.Database,
+  nodeId?: string,
+  name?: string,
+  kind?: NodeKind
+): ParsedNode {
+  if (nodeId) {
+    const node = db
+      .prepare(
+        "SELECT id, name, kind, file_path, start_line, end_line, exported FROM nodes WHERE id = ?"
+      )
+      .get(nodeId) as ParsedNode | undefined;
+    if (!node) throw new Error(`Node not found: ${nodeId}`);
+    return node;
+  }
+  if (!name) throw new Error("Either node_id or name must be provided.");
+  const nodes = findSymbol(db, name, kind, true);
+  if (nodes.length === 0)
+    throw new Error(`No symbol found matching '${name}'.`);
+  if (nodes.length > 1)
+    throw new Error(
+      `Ambiguous: ${nodes.length} symbols match '${name}'. ` +
+        `Provide kind or use node_id. Matches: ${nodes.map((n) => `${n.name} (${n.kind} in ${n.file_path})`).join(", ")}`
+    );
+  return nodes[0]!;
+}
+
 // Row type returned by whyIsThisUsed — one row per traversal hop
 export interface WhyRow {
   from_id: string;
@@ -16,6 +46,12 @@ export interface WhyRow {
 
 // Row type returned by explainImpact — node augmented with shortest depth
 export type ImpactNode = ParsedNode & { depth: number };
+
+// Return type for explainImpact (includes optional paths)
+export interface ImpactResult {
+  affected_nodes: ImpactNode[];
+  paths: WhyRow[];
+}
 
 // Return type for getNeighbors
 export interface Neighbors {
@@ -135,14 +171,15 @@ export function getNeighbors(
 // explainImpact — blast-radius analysis.
 // Returns all nodes that transitively depend on the given node (reverse traversal),
 // each annotated with its shortest depth from the starting node.
+// When includePaths is true, also returns per-hop path rows (same data as whyIsThisUsed).
 // Cycle-safe: guarded by path accumulation and depth limit.
-// Bind order: [nodeId, nodeId, maxDepth, nodeId]
 export function explainImpact(
   db: Database.Database,
   nodeId: string,
-  maxDepth: number
-): ImpactNode[] {
-  const sql = `
+  maxDepth: number,
+  includePaths: boolean = true
+): ImpactResult {
+  const affectedSql = `
     WITH RECURSIVE traversal(node_id, depth, path) AS (
       SELECT
         ?,
@@ -168,7 +205,16 @@ export function explainImpact(
     ORDER BY depth, n.file_path, n.name
   `;
 
-  return db.prepare(sql).all(nodeId, nodeId, maxDepth, nodeId) as ImpactNode[];
+  const affected_nodes = db
+    .prepare(affectedSql)
+    .all(nodeId, nodeId, maxDepth, nodeId) as ImpactNode[];
+
+  let paths: WhyRow[] = [];
+  if (includePaths) {
+    paths = whyIsThisUsed(db, nodeId, maxDepth);
+  }
+
+  return { affected_nodes, paths };
 }
 
 // whyIsThisUsed — path chains answering "why does this symbol exist?".

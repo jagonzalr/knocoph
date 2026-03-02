@@ -6,7 +6,7 @@ import type Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { openDatabase } from "../src/db.js";
-import { indexFile, indexProject } from "../src/indexer.js";
+import { indexFile, indexProject, PARSER_VERSION } from "../src/indexer.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -261,5 +261,57 @@ describe("indexProject — duration is recorded", () => {
     const stats = indexProject(db, tmpDir, ["**/*.ts"], []);
 
     expect(stats.duration_ms).toBeGreaterThanOrEqual(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Parser version invalidation
+// ---------------------------------------------------------------------------
+
+describe("indexProject — parser version invalidation", () => {
+  it("stores PARSER_VERSION in meta after indexing", () => {
+    fs.writeFileSync(path.join(tmpDir, "a.ts"), "export function a() {}");
+    indexProject(db, tmpDir, ["**/*.ts"], []);
+
+    const row = db
+      .prepare("SELECT value FROM meta WHERE key = 'parser_version'")
+      .get() as { value: string } | undefined;
+    expect(row?.value).toBe(String(PARSER_VERSION));
+  });
+
+  it("forces full re-index when stored parser version differs", () => {
+    fs.writeFileSync(path.join(tmpDir, "a.ts"), "export function a() {}");
+
+    // First index — sets parser version.
+    const first = indexProject(db, tmpDir, ["**/*.ts"], []);
+    expect(first.files_updated).toBe(1);
+
+    // Second index — file unchanged, should skip.
+    const second = indexProject(db, tmpDir, ["**/*.ts"], []);
+    expect(second.files_skipped).toBe(1);
+    expect(second.files_updated).toBe(0);
+
+    // Simulate a parser version change by writing a stale version to meta.
+    db.prepare("INSERT OR REPLACE INTO meta VALUES ('parser_version', ?)").run(
+      "0"
+    );
+
+    // Third index — parser version mismatch forces re-parse.
+    const third = indexProject(db, tmpDir, ["**/*.ts"], []);
+    expect(third.files_updated).toBe(1);
+    expect(third.files_skipped).toBe(0);
+  });
+
+  it("forces re-index when no parser version is stored (legacy DB)", () => {
+    fs.writeFileSync(path.join(tmpDir, "a.ts"), "export function a() {}");
+    indexProject(db, tmpDir, ["**/*.ts"], []);
+
+    // Remove the parser_version row to simulate a legacy database.
+    db.prepare("DELETE FROM meta WHERE key = 'parser_version'").run();
+
+    // Next index should detect the missing version and re-parse all files.
+    const stats = indexProject(db, tmpDir, ["**/*.ts"], []);
+    expect(stats.files_updated).toBe(1);
+    expect(stats.files_skipped).toBe(0);
   });
 });

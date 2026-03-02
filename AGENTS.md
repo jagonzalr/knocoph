@@ -54,28 +54,34 @@ This project is indexed with Knocoph. A persistent code knowledge graph is avail
 
 ### Rule: graph before files
 
-1. Call `find_symbol` to locate any symbol by name before opening any file.
-2. Call `get_neighbors` to explore what a symbol calls and what calls it, before reading the file it lives in.
-3. Call `get_snippet` with `start_line` and `end_line` from `find_symbol` to read a specific function or class body. Only open full files when you need context outside that snippet.
-4. Call `explain_impact` before modifying any symbol to understand what else might break.
-5. Call `why_is_this_used` before deleting or refactoring an unfamiliar symbol to understand why it exists.
-6. Call `codebase_overview` at the start of any analysis to understand the project's structure, file count, symbol distribution, and top-level architecture.
-7. Call `query_architecture` to understand what symbols a file defines and what it imports/exports before reading the file.
-8. Call `index_project` if the graph appears stale after code changes, or to configure the initial indexing with custom glob patterns and ignore rules.
+1. Call `find_symbol` to locate any symbol by name. Use `include_snippet: true`
+   to get the source code in the same call.
+2. Call `get_neighbors` with a symbol `name` or `node_id` to explore what it
+   calls and what calls it, before reading the file it lives in.
+3. Call `explain_impact` with a symbol `name` or `node_id` before modifying any
+   symbol to understand blast radius and dependency paths.
+4. Call `codebase_overview` at the start of any analysis to understand the
+   project's structure, file count, symbol distribution, and top-level architecture.
+5. Call `query_architecture` to understand what symbols a file defines and what
+   it imports/exports before reading the file.
+6. Call `get_snippet` to read specific lines from a file when you have
+   file_path and line numbers from a previous tool result.
+7. Call `index_project` if the graph appears stale after code changes.
 
 ### Tool selection guide
 
-| Question                               | Tool                                               |
-| -------------------------------------- | -------------------------------------------------- |
-| Overview of symbols and relationships? | `codebase_overview { }`                            |
-| Where is `UserService` defined?        | `find_symbol { name: "UserService" }`              |
-| What does `UserService` call?          | `get_neighbors { node_id, direction: "outgoing" }` |
-| What calls `UserService`?              | `get_neighbors { node_id, direction: "incoming" }` |
-| Show me the body of `create`           | `get_snippet { file_path, start_line, end_line }`  |
-| What breaks if I change `createUser`?  | `explain_impact { node_id }`                       |
-| Why does `createUser` exist?           | `why_is_this_used { node_id }`                     |
-| What does this file export and import? | `query_architecture { file_path }`                 |
-| Graph returns empty results            | `index_project { root_dir: "." }`                  |
+| Question                               | Tool                                                           |
+| -------------------------------------- | -------------------------------------------------------------- |
+| Overview of symbols and relationships? | `codebase_overview { }`                                        |
+| Where is `UserService` defined?        | `find_symbol { name: "UserService" }`                          |
+| Show me the body of `create`           | `find_symbol { name: "create", include_snippet: true }`        |
+| What does `UserService` call?          | `get_neighbors { name: "UserService", direction: "outgoing" }` |
+| What calls `UserService`?              | `get_neighbors { name: "UserService", direction: "incoming" }` |
+| What breaks if I change `createUser`?  | `explain_impact { name: "createUser" }`                        |
+| Why does `createUser` exist?           | `explain_impact { name: "createUser" }`                        |
+| What does this file export and import? | `query_architecture { file_path }`                             |
+| Read lines 50-80 of a file             | `get_snippet { file_path, start_line: 50, end_line: 80 }`      |
+| Graph returns empty results            | `index_project { root_dir: "." }`                              |
 
 ### What not to do
 
@@ -86,4 +92,3 @@ This project is indexed with Knocoph. A persistent code knowledge graph is avail
 ### Keeping the graph fresh
 
 After the first `index_project` call, the file watcher keeps the graph current automatically — even across process restarts. If the graph appears stale, call `index_project { root_dir: "." }` again. Files that have not changed are skipped instantly.
-

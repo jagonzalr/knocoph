@@ -569,13 +569,13 @@ describe("resolveImportPath — extension remapping", () => {
 });
 
 // ---------------------------------------------------------------------------
-// walkShallow array traversal (line 191: Array.isArray check)
+// walk — array traversal (call edge collection in function bodies)
 // ---------------------------------------------------------------------------
 
-describe("walkShallow — array node iteration", () => {
+describe("walk — array node iteration", () => {
   it("walks through array of statements in function body", () => {
     // A function with multiple statements creates arrays in the BlockStatement
-    // that walkShallow must traverse to find nested CallExpressions
+    // that walk must traverse to find nested CallExpressions
     const fp = "/tmp/knocoph-multi-stmts.ts";
     const content = `
       function a() {}
@@ -680,6 +680,59 @@ describe("walkShallow — array node iteration", () => {
         e.source_id === testNodeId(fp, "loop", "function")
     );
     expect(callsEdges.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("captures calls inside anonymous arrow-function callbacks", () => {
+    // Callbacks passed to higher-order functions should still attribute
+    // their inner calls to the enclosing named function (walk is fully recursive).
+    const fp = "/tmp/knocoph-callback.ts";
+    const content = `
+      function inner() {}
+      export function outer() {
+        const items = [1, 2, 3];
+        items.forEach((x) => {
+          inner();
+        });
+      }
+    `;
+    const result = parseFile(fp, content);
+
+    const callsEdges = result.edges.filter(
+      (e) =>
+        e.relationship_type === "CALLS" &&
+        e.source_id === testNodeId(fp, "outer", "function")
+    );
+    expect(
+      callsEdges.some(
+        (e) => e.target_id === testNodeId(fp, "inner", "function")
+      )
+    ).toBe(true);
+  });
+
+  it("captures calls inside nested function expressions", () => {
+    // Function expressions that are not top-level declarations should
+    // still attribute their inner calls to the enclosing named function.
+    const fp = "/tmp/knocoph-nested-fn.ts";
+    const content = `
+      function helper() {}
+      export function register() {
+        const handler = async function(input: unknown) {
+          helper();
+        };
+      }
+    `;
+    const result = parseFile(fp, content);
+
+    const callsEdges = result.edges.filter(
+      (e) =>
+        e.relationship_type === "CALLS" &&
+        e.source_id === testNodeId(fp, "register", "function")
+    );
+    expect(
+      callsEdges.some(
+        (e) => e.target_id === testNodeId(fp, "helper", "function")
+      )
+    ).toBe(true);
   });
 });
 

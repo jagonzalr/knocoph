@@ -69,7 +69,7 @@ This approach minimizes token consumption and provides fast, accurate structural
 - **Persistent code graph** — parses codebases into nodes (symbols) and edges (relationships), stored in SQLite
 - **Automatic indexing** — file watcher keeps the graph updated as code changes
 - **Zero file reading** — query structural questions without opening source files
-- **MCP tools** — 8 specialized query tools for different exploration patterns
+- **MCP tools** — 7 specialized query tools for different exploration patterns
 - **Cross-file relationships** — tracks imports, exports, calls, inheritance, and containment
 
 ## How It Works
@@ -84,11 +84,10 @@ This approach minimizes token consumption and provides fast, accurate structural
 | Tool                 | Purpose                                                                       |
 | -------------------- | ----------------------------------------------------------------------------- |
 | `codebase_overview`  | Get structural summary of entire codebase (files, symbols, kind distribution) |
-| `find_symbol`        | Locate any symbol by name and return its file and line range                  |
-| `get_neighbors`      | Explore incoming/outgoing relationships (what a symbol calls, what calls it)  |
-| `get_snippet`        | Fetch exact source code snippet for a symbol                                  |
-| `explain_impact`     | Blast radius analysis — what breaks if you change a symbol?                   |
-| `why_is_this_used`   | Reverse traversal — why does this symbol exist?                               |
+| `find_symbol`        | Locate any symbol by name; optionally include source code snippet             |
+| `get_neighbors`      | Explore incoming/outgoing relationships by symbol name or ID                  |
+| `get_snippet`        | Fetch exact source code snippet for a symbol or line range                    |
+| `explain_impact`     | Blast radius and dependency analysis; understand why a symbol exists          |
 | `query_architecture` | File-level view — what symbols does a file define and import/export?          |
 | `index_project`      | Trigger or refresh graph indexing for a codebase                              |
 
