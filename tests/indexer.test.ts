@@ -249,7 +249,7 @@ describe("indexProject — console.error progress logging", () => {
       indexProject(db, tmpDir, ["**/*.ts"], []);
 
       // The progress message should appear at least once
-      expect(stderrOutput).toMatch(/\[Knocoph\] Indexed 100/);
+      expect(stderrOutput).toMatch(/\[knocoph\] Indexed 100/);
     } finally {
       console.error = originalStderr;
     }
