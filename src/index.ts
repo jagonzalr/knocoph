@@ -43,7 +43,14 @@ if (
   const rootDir = rootDirRow.value;
   const globs = JSON.parse(globsRow.value) as string[];
   const ignore = JSON.parse(ignoreRow.value) as string[];
-  console.error("[knocoph] Auto-starting watcher for", rootDir);
+  // Re-index on restart so the graph reflects any files added, modified, or
+  // deleted while the server was not running.  Unchanged files are skipped
+  // by content-hash comparison, so this is cheap for stable codebases.
+  console.error("[knocoph] Re-indexing", rootDir);
+  const stats = indexProject(db, rootDir, globs, ignore);
+  console.error(
+    `[knocoph] Re-index complete: ${stats.files_updated} updated, ${stats.files_skipped} unchanged in ${stats.duration_ms}ms`
+  );
   startWatcher(db, rootDir, globs, ignore);
 } else {
   // Fresh installation — no previous index_project run found in meta.

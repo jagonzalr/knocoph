@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
-import { getNeighbors } from "../queries.js";
+import { getNeighbors, resolveNode } from "../queries.js";
 
 export function register(server: McpServer, db: Database.Database): void {
   server.registerTool(
@@ -11,38 +11,58 @@ export function register(server: McpServer, db: Database.Database): void {
     {
       description:
         "Return one-hop neighbors of a known node. Shows what a symbol calls, what calls it, what it imports, and what it extends.",
-      inputSchema: {
-        node_id: z.string().min(1),
-        direction: z.enum(["incoming", "outgoing", "both"]).default("both"),
-        relationship_types: z
-          .array(
-            z.enum([
-              "IMPORTS",
-              "EXPORTS",
-              "CALLS",
-              "EXTENDS",
-              "IMPLEMENTS",
-              "CONTAINS",
-              "REFERENCES",
+      inputSchema: z
+        .object({
+          node_id: z.string().min(1).optional(),
+          name: z.string().min(1).optional(),
+          kind: z
+            .enum([
+              "function",
+              "class",
+              "interface",
+              "type_alias",
+              "enum",
+              "namespace",
+              "method",
+              "constructor",
+              "arrow_function",
+              "variable",
             ])
-          )
-          .optional(),
-      },
+            .optional(),
+          direction: z.enum(["incoming", "outgoing", "both"]).default("both"),
+          relationship_types: z
+            .array(
+              z.enum([
+                "IMPORTS",
+                "EXPORTS",
+                "CALLS",
+                "EXTENDS",
+                "IMPLEMENTS",
+                "CONTAINS",
+                "REFERENCES",
+              ])
+            )
+            .optional(),
+        })
+        .refine((data) => data.node_id || data.name, {
+          message: "Either node_id or name must be provided.",
+        }),
     },
     async (input) => {
       try {
+        const node = resolveNode(db, input.node_id, input.name, input.kind);
         const result = getNeighbors(
           db,
-          input.node_id,
+          node.id,
           input.direction,
           input.relationship_types
         );
 
         const outCount = result.edges.filter(
-          (e) => e.source_id === input.node_id
+          (e) => e.source_id === node.id
         ).length;
         const inCount = result.edges.filter(
-          (e) => e.target_id === input.node_id
+          (e) => e.target_id === node.id
         ).length;
         const summary = `Node has ${outCount} outgoing and ${inCount} incoming edge(s).`;
 

@@ -172,39 +172,6 @@ function walk(node: TSESTree.Node, visitor: (n: TSESTree.Node) => void): void {
   }
 }
 
-// Walk that does NOT descend into nested function scopes beyond the starting node.
-// Used when collecting CALLS edges from a function body so that inner function
-// declarations are attributed to their own scope, not their parent.
-function walkShallow(
-  node: TSESTree.Node,
-  visitor: (n: TSESTree.Node) => void,
-  _isRoot: boolean = true
-): void {
-  visitor(node);
-  // Do not cross function boundaries when descending (the root itself is fine)
-  if (
-    !_isRoot &&
-    (node.type === "FunctionDeclaration" ||
-      node.type === "FunctionExpression" ||
-      node.type === "ArrowFunctionExpression")
-  ) {
-    return;
-  }
-
-  for (const value of Object.values(node)) {
-    if (value === null || typeof value !== "object") continue;
-    if (Array.isArray(value)) {
-      for (const item of value) {
-        if (item !== null && typeof item === "object" && "type" in item) {
-          walkShallow(item as TSESTree.Node, visitor, false);
-        }
-      }
-    } else if ("type" in value) {
-      walkShallow(value as TSESTree.Node, visitor, false);
-    }
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Node extraction helpers
 // ---------------------------------------------------------------------------
@@ -242,7 +209,7 @@ function collectCallEdges(
   filePath: string,
   edges: ParsedEdge[]
 ): void {
-  walkShallow(bodyAstNode, (n) => {
+  walk(bodyAstNode, (n) => {
     if (n.type !== "CallExpression") return;
 
     const callee = n.callee;

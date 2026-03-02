@@ -38,6 +38,15 @@ export function deleteFile(db: Database.Database, path: string): void {
   db.prepare("DELETE FROM files WHERE path = ?").run(path);
 }
 
+// Delete all files, nodes, and edges. Used to force a full re-index when
+// the parser version changes (stale edges would otherwise persist for
+// files whose content hash has not changed).
+export function clearGraph(db: Database.Database): void {
+  db.prepare("DELETE FROM edges").run();
+  db.prepare("DELETE FROM nodes").run();
+  db.prepare("DELETE FROM files").run();
+}
+
 // Only place in the codebase where transactions are constructed.
 export function writeTransaction(db: Database.Database, fn: () => void): void {
   db.transaction(fn)();

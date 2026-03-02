@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { SCHEMA_SQL, openDatabase } from "../src/db.js";
 import {
+  clearGraph,
   deleteFile,
   insertEdge,
   insertFile,
@@ -145,5 +146,37 @@ describe("writeTransaction rollback", () => {
 
     const rows = db.prepare("SELECT id FROM nodes").all();
     expect(rows).toHaveLength(0);
+  });
+});
+
+describe("clearGraph", () => {
+  it("removes all files, nodes, and edges", () => {
+    const db = makeDb();
+    insertFile(db, TEST_FILE, TEST_HASH);
+    insertNode(db, TEST_NODE);
+    insertEdge(db, TEST_EDGE);
+
+    // Verify data exists
+    expect(db.prepare("SELECT COUNT(*) as n FROM files").get()).toEqual({
+      n: 1,
+    });
+    expect(db.prepare("SELECT COUNT(*) as n FROM nodes").get()).toEqual({
+      n: 1,
+    });
+    expect(db.prepare("SELECT COUNT(*) as n FROM edges").get()).toEqual({
+      n: 1,
+    });
+
+    clearGraph(db);
+
+    expect(db.prepare("SELECT COUNT(*) as n FROM files").get()).toEqual({
+      n: 0,
+    });
+    expect(db.prepare("SELECT COUNT(*) as n FROM nodes").get()).toEqual({
+      n: 0,
+    });
+    expect(db.prepare("SELECT COUNT(*) as n FROM edges").get()).toEqual({
+      n: 0,
+    });
   });
 });

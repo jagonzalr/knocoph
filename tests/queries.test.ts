@@ -9,6 +9,7 @@ import {
   findSymbol,
   getNeighbors,
   queryArchitecture,
+  resolveNode,
   whyIsThisUsed,
 } from "../src/queries.js";
 import type { ParsedEdge, ParsedNode } from "../src/types.js";
@@ -109,6 +110,95 @@ describe("findSymbol", () => {
   it("kind filter with no matching kind returns empty array", () => {
     const results = findSymbol(db, "alpha", "interface");
     expect(results).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveNode
+// ---------------------------------------------------------------------------
+
+describe("resolveNode", () => {
+  let db: Database.Database;
+
+  const FILE = "/test/resolve.ts";
+
+  const nodeUnique: ParsedNode = {
+    id: "resolve-unique",
+    name: "uniqueSymbol",
+    kind: "function",
+    file_path: FILE,
+    start_line: 1,
+    end_line: 3,
+    exported: 1,
+  };
+  const nodeAmbigFn: ParsedNode = {
+    id: "resolve-ambig-fn",
+    name: "ambiguous",
+    kind: "function",
+    file_path: FILE,
+    start_line: 5,
+    end_line: 7,
+    exported: 0,
+  };
+  const nodeAmbigClass: ParsedNode = {
+    id: "resolve-ambig-class",
+    name: "ambiguous",
+    kind: "class",
+    file_path: FILE,
+    start_line: 9,
+    end_line: 15,
+    exported: 1,
+  };
+
+  beforeAll(() => {
+    db = makeDb();
+    insertFile(db, FILE, "hash-resolve");
+    insertNode(db, nodeUnique);
+    insertNode(db, nodeAmbigFn);
+    insertNode(db, nodeAmbigClass);
+  });
+
+  it("resolves by node_id when provided", () => {
+    const node = resolveNode(db, "resolve-unique");
+    expect(node.id).toBe("resolve-unique");
+    expect(node.name).toBe("uniqueSymbol");
+  });
+
+  it("resolves by name when node_id is not provided", () => {
+    const node = resolveNode(db, undefined, "uniqueSymbol");
+    expect(node.id).toBe("resolve-unique");
+  });
+
+  it("throws when node_id does not exist", () => {
+    expect(() => resolveNode(db, "nonexistent-id")).toThrow("Node not found");
+  });
+
+  it("throws when neither node_id nor name is provided", () => {
+    expect(() => resolveNode(db)).toThrow(
+      "Either node_id or name must be provided."
+    );
+  });
+
+  it("throws when name matches no symbols", () => {
+    expect(() => resolveNode(db, undefined, "noSuchSymbol")).toThrow(
+      "No symbol found"
+    );
+  });
+
+  it("throws when name is ambiguous (multiple matches)", () => {
+    expect(() => resolveNode(db, undefined, "ambiguous")).toThrow("Ambiguous");
+  });
+
+  it("kind disambiguates when name has multiple matches", () => {
+    const node = resolveNode(db, undefined, "ambiguous", "class");
+    expect(node.id).toBe("resolve-ambig-class");
+    expect(node.kind).toBe("class");
+  });
+
+  it("node_id takes precedence over name", () => {
+    // Provide both: node_id wins
+    const node = resolveNode(db, "resolve-unique", "ambiguous");
+    expect(node.id).toBe("resolve-unique");
   });
 });
 
@@ -297,7 +387,7 @@ describe("explainImpact", () => {
     });
 
     const result = explainImpact(chainDb, "imp-a", 5);
-    const map = new Map(result.map((r) => [r.id, r.depth]));
+    const map = new Map(result.affected_nodes.map((r) => [r.id, r.depth]));
 
     expect(map.get("imp-b")).toBe(1);
     expect(map.get("imp-c")).toBe(2);
@@ -330,7 +420,7 @@ describe("explainImpact", () => {
     });
 
     const result = explainImpact(chainDb, "imp-a", 2);
-    const ids = result.map((r) => r.id);
+    const ids = result.affected_nodes.map((r) => r.id);
 
     expect(ids).toContain("imp-b");
     expect(ids).toContain("imp-c");
@@ -367,9 +457,9 @@ describe("explainImpact", () => {
 
     expect(elapsed).toBeLessThan(100);
     // Root A must not appear; at most B and C
-    const ids = result.map((r) => r.id);
+    const ids = result.affected_nodes.map((r) => r.id);
     expect(ids).not.toContain("imp-a");
-    expect(result.length).toBeLessThanOrEqual(2);
+    expect(result.affected_nodes.length).toBeLessThanOrEqual(2);
     expect(ids).toContain("imp-b");
     expect(ids).toContain("imp-c");
   });
@@ -404,19 +494,62 @@ describe("explainImpact", () => {
     });
 
     const result = explainImpact(diamondDb, "imp-a", 5);
-    const dResults = result.filter((r) => r.id === "imp-d");
+    const dResults = result.affected_nodes.filter((r) => r.id === "imp-d");
 
     // D must appear exactly once even though it is reachable via two paths
     expect(dResults).toHaveLength(1);
   });
 
-  it("returns empty array when no nodes depend on the given node", () => {
+  it("returns empty affected_nodes when no nodes depend on the given node", () => {
     db = makeDb();
     insertFile(db, FILE, "hash-isolated");
     insertNode(db, nA);
 
     const result = explainImpact(db, "imp-a", 5);
-    expect(result).toHaveLength(0);
+    expect(result.affected_nodes).toHaveLength(0);
+    expect(result.paths).toHaveLength(0);
+  });
+
+  it("include_paths=true returns both affected_nodes and paths", () => {
+    const chainDb = makeDb();
+    insertFile(chainDb, FILE, "hash-paths");
+    insertNode(chainDb, nA);
+    insertNode(chainDb, nB);
+    insertNode(chainDb, nC);
+    insertEdge(chainDb, {
+      source_id: "imp-b",
+      target_id: "imp-a",
+      relationship_type: "CALLS",
+    });
+    insertEdge(chainDb, {
+      source_id: "imp-c",
+      target_id: "imp-b",
+      relationship_type: "CALLS",
+    });
+
+    const result = explainImpact(chainDb, "imp-a", 5, true);
+    expect(result.affected_nodes.length).toBeGreaterThan(0);
+    expect(result.paths.length).toBeGreaterThan(0);
+    // paths should contain hop-level info
+    expect(result.paths[0]).toHaveProperty("from_name");
+    expect(result.paths[0]).toHaveProperty("to_name");
+    expect(result.paths[0]).toHaveProperty("relationship_type");
+  });
+
+  it("include_paths=false returns empty paths array", () => {
+    const chainDb = makeDb();
+    insertFile(chainDb, FILE, "hash-nopaths");
+    insertNode(chainDb, nA);
+    insertNode(chainDb, nB);
+    insertEdge(chainDb, {
+      source_id: "imp-b",
+      target_id: "imp-a",
+      relationship_type: "CALLS",
+    });
+
+    const result = explainImpact(chainDb, "imp-a", 5, false);
+    expect(result.affected_nodes).toHaveLength(1);
+    expect(result.paths).toHaveLength(0);
   });
 });
 

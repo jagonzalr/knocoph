@@ -5,6 +5,7 @@ import * as path from "node:path";
 import type Database from "better-sqlite3";
 
 import {
+  clearGraph,
   deleteFile,
   insertEdge,
   insertFile,
@@ -13,6 +14,12 @@ import {
 } from "./graph.js";
 import { parseFile } from "./parser.js";
 import type { IndexStats } from "./types.js";
+
+// Bump this version whenever parser logic changes in a way that affects
+// extracted nodes or edges. When the stored version differs from this
+// constant, indexProject clears the graph and forces a full re-parse so
+// stale data from the old parser does not persist.
+export const PARSER_VERSION = 2;
 
 // ---------------------------------------------------------------------------
 // indexFile
@@ -101,6 +108,19 @@ export function indexProject(
     duration_ms: 0,
   };
 
+  // Check parser version — if it differs, clear the entire graph so every
+  // file is re-parsed with the current parser logic.
+  const storedVersion = db
+    .prepare("SELECT value FROM meta WHERE key = 'parser_version'")
+    .get() as { value: string } | undefined;
+
+  if (storedVersion?.value !== String(PARSER_VERSION)) {
+    console.error(
+      `[knocoph] Parser version changed (${storedVersion?.value ?? "none"} → ${PARSER_VERSION}), forcing full re-index`
+    );
+    clearGraph(db);
+  }
+
   // Collect all matching paths across all glob patterns. Deduplicate so a
   // file matched by two patterns is indexed only once.
   const seen = new Set<string>();
@@ -130,5 +150,11 @@ export function indexProject(
   }
 
   stats.duration_ms = Date.now() - start;
+
+  // Persist current parser version so the next run can detect changes.
+  db.prepare("INSERT OR REPLACE INTO meta VALUES ('parser_version', ?)").run(
+    String(PARSER_VERSION)
+  );
+
   return stats;
 }
