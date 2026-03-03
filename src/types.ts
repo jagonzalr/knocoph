@@ -47,3 +47,13 @@ export interface IndexStats {
   files_errored: number;
   duration_ms: number;
 }
+
+// Resolved tsconfig compilerOptions.paths for import alias resolution.
+// baseDir is the directory of the tsconfig (or baseUrl resolved against it).
+// paths mirrors compilerOptions.paths: pattern -> array of replacement templates.
+// Only simple prefix wildcards (@scope/* -> ./src/*) and exact matches are
+// supported. Complex patterns (multiple wildcards, non-prefix) are not resolved.
+export interface PathAliases {
+  baseDir: string;
+  paths: Record<string, string[]>;
+}

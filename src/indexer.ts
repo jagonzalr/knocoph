@@ -13,7 +13,7 @@ import {
   writeTransaction,
 } from "./graph.js";
 import { parseFile } from "./parser.js";
-import type { IndexStats } from "./types.js";
+import type { IndexStats, PathAliases } from "./types.js";
 
 // Bump this version whenever parser logic changes in a way that affects
 // extracted nodes or edges. When the stored version differs from this
@@ -33,7 +33,8 @@ export const PARSER_VERSION = 2;
 // needing to catch errors themselves.
 export function indexFile(
   db: Database.Database,
-  filePath: string
+  filePath: string,
+  pathAliases?: PathAliases
 ): { status: "updated" | "skipped" | "error"; error?: string } {
   let content: string;
   try {
@@ -57,7 +58,7 @@ export function indexFile(
 
   let parsed: ReturnType<typeof parseFile>;
   try {
-    parsed = parseFile(filePath, content);
+    parsed = parseFile(filePath, content, pathAliases);
   } catch (e) {
     return {
       status: "error",
@@ -97,7 +98,8 @@ export function indexProject(
   db: Database.Database,
   rootDir: string,
   globs: string[],
-  ignore: string[]
+  ignore: string[],
+  pathAliases?: PathAliases
 ): IndexStats {
   const start = Date.now();
   const stats: IndexStats = {
@@ -139,7 +141,7 @@ export function indexProject(
   for (const filePath of seen) {
     stats.files_scanned++;
 
-    const result = indexFile(db, filePath);
+    const result = indexFile(db, filePath, pathAliases);
     if (result.status === "updated") stats.files_updated++;
     else if (result.status === "skipped") stats.files_skipped++;
     else stats.files_errored++;

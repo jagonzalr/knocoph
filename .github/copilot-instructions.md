@@ -16,22 +16,23 @@ This project is indexed with Knocoph. A persistent code knowledge graph is avail
    it imports/exports before reading the file.
 6. Call `get_snippet` to read specific lines from a file when you have
    file_path and line numbers from a previous tool result.
-7. Call `index_project` if the graph appears stale after code changes.
+7. Call `index_project` if the graph appears stale after code changes. `tsconfig.json` is auto-detected at the project root for path alias resolution — pass `tsconfig_path` explicitly if it lives elsewhere.
 
 ## Tool selection guide
 
-| Question                               | Tool                                                           |
-| -------------------------------------- | -------------------------------------------------------------- |
-| Overview of symbols and relationships? | `codebase_overview { }`                                        |
-| Where is `UserService` defined?        | `find_symbol { name: "UserService" }`                          |
-| Show me the body of `create`           | `find_symbol { name: "create", include_snippet: true }`        |
-| What does `UserService` call?          | `get_neighbors { name: "UserService", direction: "outgoing" }` |
-| What calls `UserService`?              | `get_neighbors { name: "UserService", direction: "incoming" }` |
-| What breaks if I change `createUser`?  | `explain_impact { name: "createUser" }`                        |
-| Why does `createUser` exist?           | `explain_impact { name: "createUser" }`                        |
-| What does this file export and import? | `query_architecture { file_path }`                             |
-| Read lines 50-80 of a file             | `get_snippet { file_path, start_line: 50, end_line: 80 }`      |
-| Graph returns empty results            | `index_project { root_dir: "." }`                              |
+| Question                               | Tool                                                                             |
+| -------------------------------------- | -------------------------------------------------------------------------------- |
+| Overview of symbols and relationships? | `codebase_overview { }`                                                          |
+| Where is `UserService` defined?        | `find_symbol { name: "UserService" }`                                            |
+| Show me the body of `create`           | `find_symbol { name: "create", include_snippet: true }`                          |
+| What does `UserService` call?          | `get_neighbors { name: "UserService", direction: "outgoing" }`                   |
+| What calls `UserService`?              | `get_neighbors { name: "UserService", direction: "incoming" }`                   |
+| What breaks if I change `createUser`?  | `explain_impact { name: "createUser" }`                                          |
+| Why does `createUser` exist?           | `explain_impact { name: "createUser" }`                                          |
+| What does this file export and import? | `query_architecture { file_path }`                                               |
+| Read lines 50-80 of a file             | `get_snippet { file_path, start_line: 50, end_line: 80 }`                        |
+| Graph returns empty results            | `index_project { root_dir: "." }`                                                |
+| Non-root or monorepo tsconfig          | `index_project { root_dir: ".", tsconfig_path: "./packages/app/tsconfig.json" }` |
 
 ## What not to do
 
@@ -42,3 +43,5 @@ This project is indexed with Knocoph. A persistent code knowledge graph is avail
 ## Keeping the graph fresh
 
 After the first `index_project` call, the file watcher keeps the graph current automatically — even across process restarts. If the graph appears stale, call `index_project { root_dir: "." }` again. Files that have not changed are skipped instantly.
+
+`tsconfig.json` is read automatically from `root_dir` to resolve TypeScript path aliases (`@scope/...` imports). If your tsconfig is not at the project root (e.g. monorepo), pass it explicitly: `index_project { root_dir: ".", tsconfig_path: "./packages/app/tsconfig.json" }`.

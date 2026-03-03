@@ -337,6 +337,15 @@ describe("export default function", () => {
     expect(node).toBeDefined();
     expect(node?.exported).toBe(1);
   });
+
+  it("does not extract a node for an anonymous expression default export", () => {
+    const fp = "/tmp/knocoph-default-expr.ts";
+    const content = `export default { key: "value" };`;
+    const result = parseFile(fp, content);
+    // An anonymous object expression has no extractable name — no node emitted.
+    expect(result.nodes.length).toBe(0);
+    expect(result.edges.length).toBe(0);
+  });
 });
 
 describe("export * from — ExportAllDeclaration", () => {
@@ -842,5 +851,287 @@ describe("REFERENCES — inline edge-type sanity", () => {
       (e) => e.relationship_type === "REFERENCES"
     );
     expect(refEdges.length).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Path alias resolution — PR-V2-4
+// ---------------------------------------------------------------------------
+
+describe("path alias resolution — wildcard @scope/*", () => {
+  it("resolves wildcard alias IMPORTS edge to the correct absolute path", () => {
+    const tmpDir = fs.mkdtempSync(path.join(path.sep, "tmp", "knocoph-alias-"));
+    try {
+      const srcDir = path.join(tmpDir, "src");
+      fs.mkdirSync(srcDir);
+      const targetFile = path.join(srcDir, "utils.ts");
+      fs.writeFileSync(targetFile, "export function util() {}");
+
+      const importerFile = path.join(tmpDir, "importer.ts");
+      const content = `import { util } from "@myapp/utils";`;
+      const result = parseFile(importerFile, content, {
+        baseDir: tmpDir,
+        paths: { "@myapp/*": ["src/*"] },
+      });
+
+      const edge = result.edges.find(
+        (e) => e.relationship_type === "IMPORTS" && e.target_id === targetFile
+      );
+      expect(edge).toBeDefined();
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("resolves wildcard alias to .ts file via extension probe when no extension in import", () => {
+    const tmpDir = fs.mkdtempSync(path.join(path.sep, "tmp", "knocoph-alias-"));
+    try {
+      const srcDir = path.join(tmpDir, "src");
+      fs.mkdirSync(srcDir);
+      // Create the file WITHOUT extension in the import — probe should find .ts
+      const targetFile = path.join(srcDir, "auth.ts");
+      fs.writeFileSync(targetFile, "export function login() {}");
+
+      const importerFile = path.join(tmpDir, "caller.ts");
+      const content = `import { login } from "@app/auth";`;
+      const result = parseFile(importerFile, content, {
+        baseDir: tmpDir,
+        paths: { "@app/*": ["src/*"] },
+      });
+
+      const edge = result.edges.find(
+        (e) => e.relationship_type === "IMPORTS" && e.target_id === targetFile
+      );
+      expect(edge).toBeDefined();
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("resolves wildcard alias to index.ts when target is a directory", () => {
+    const tmpDir = fs.mkdtempSync(path.join(path.sep, "tmp", "knocoph-alias-"));
+    try {
+      const pkgDir = path.join(tmpDir, "src", "services");
+      fs.mkdirSync(pkgDir, { recursive: true });
+      const indexFile = path.join(pkgDir, "index.ts");
+      fs.writeFileSync(indexFile, "export function serve() {}");
+
+      const importerFile = path.join(tmpDir, "caller.ts");
+      const content = `import { serve } from "@app/services";`;
+      const result = parseFile(importerFile, content, {
+        baseDir: tmpDir,
+        paths: { "@app/*": ["src/*"] },
+      });
+
+      const edge = result.edges.find(
+        (e) => e.relationship_type === "IMPORTS" && e.target_id === indexFile
+      );
+      expect(edge).toBeDefined();
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("path alias resolution — exact pattern", () => {
+  it("resolves exact alias IMPORTS edge to the correct absolute path", () => {
+    const tmpDir = fs.mkdtempSync(path.join(path.sep, "tmp", "knocoph-alias-"));
+    try {
+      const targetFile = path.join(tmpDir, "src", "auth.ts");
+      fs.mkdirSync(path.join(tmpDir, "src"), { recursive: true });
+      fs.writeFileSync(targetFile, "export function login() {}");
+
+      const importerFile = path.join(tmpDir, "importer.ts");
+      const content = `import { login } from "@auth";`;
+      const result = parseFile(importerFile, content, {
+        baseDir: tmpDir,
+        paths: { "@auth": ["src/auth.ts"] },
+      });
+
+      const edge = result.edges.find(
+        (e) => e.relationship_type === "IMPORTS" && e.target_id === targetFile
+      );
+      expect(edge).toBeDefined();
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("path alias resolution — no alias match falls back to external module", () => {
+  it("keeps raw specifier as target_id for unmatched non-relative imports", () => {
+    const fp = "/tmp/knocoph-alias-fallback.ts";
+    const content = `import { x } from "lodash";`;
+    const result = parseFile(fp, content, {
+      baseDir: "/tmp",
+      paths: { "@myapp/*": ["src/*"] },
+    });
+
+    const edge = result.edges.find(
+      (e) => e.relationship_type === "IMPORTS" && e.target_id === "lodash"
+    );
+    expect(edge).toBeDefined();
+  });
+
+  it("still resolves relative imports normally when pathAliases is set", () => {
+    const tmpDir = fs.mkdtempSync(path.join(path.sep, "tmp", "knocoph-alias-"));
+    try {
+      const sibling = path.join(tmpDir, "sibling.ts");
+      fs.writeFileSync(sibling, "export function helper() {}");
+
+      const importerFile = path.join(tmpDir, "importer.ts");
+      const content = `import { helper } from "./sibling.js";`;
+      const result = parseFile(importerFile, content, {
+        baseDir: tmpDir,
+        paths: { "@app/*": ["src/*"] },
+      });
+
+      const edge = result.edges.find(
+        (e) => e.relationship_type === "IMPORTS" && e.target_id === sibling
+      );
+      expect(edge).toBeDefined();
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("path alias resolution — CALLS edge resolved through alias", () => {
+  it("emits correct CALLS edge when called function comes from an aliased import", () => {
+    const tmpDir = fs.mkdtempSync(path.join(path.sep, "tmp", "knocoph-alias-"));
+    try {
+      const srcDir = path.join(tmpDir, "src");
+      fs.mkdirSync(srcDir);
+      const targetFile = path.join(srcDir, "auth.ts");
+      fs.writeFileSync(targetFile, "export function login() {}");
+
+      const importerFile = path.join(tmpDir, "caller.ts");
+      const content = `
+        import { login } from "@app/auth";
+        export function run() { login(); }
+      `;
+      const result = parseFile(importerFile, content, {
+        baseDir: tmpDir,
+        paths: { "@app/*": ["src/*"] },
+      });
+
+      const callsEdge = result.edges.find(
+        (e) =>
+          e.relationship_type === "CALLS" &&
+          e.source_id === testNodeId(importerFile, "run", "function") &&
+          e.target_id === testNodeId(targetFile, "login", "function")
+      );
+      expect(callsEdge).toBeDefined();
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// probeExtensions — remaining branch coverage
+// ---------------------------------------------------------------------------
+
+describe("probeExtensions — directory with index.tsx but no index.ts", () => {
+  it("resolves alias to index.tsx when target directory lacks index.ts", () => {
+    const tmpDir = fs.mkdtempSync(path.join(path.sep, "tmp", "knocoph-probe-"));
+    try {
+      const uiDir = path.join(tmpDir, "src", "ui");
+      fs.mkdirSync(uiDir, { recursive: true });
+      const indexTsx = path.join(uiDir, "index.tsx");
+      fs.writeFileSync(indexTsx, "export function Button() {}");
+      // Explicitly no index.ts in uiDir
+
+      const importerFile = path.join(tmpDir, "caller.ts");
+      const content = `import { Button } from "@app/ui";`;
+      const result = parseFile(importerFile, content, {
+        baseDir: tmpDir,
+        paths: { "@app/*": ["src/*"] },
+      });
+
+      const edge = result.edges.find(
+        (e) => e.relationship_type === "IMPORTS" && e.target_id === indexTsx
+      );
+      expect(edge).toBeDefined();
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("probeExtensions — directory with no index file (dangling)", () => {
+  it("returns directory path as-is when it has no index.ts or index.tsx", () => {
+    const tmpDir = fs.mkdtempSync(path.join(path.sep, "tmp", "knocoph-probe-"));
+    try {
+      const emptyDir = path.join(tmpDir, "src", "empty");
+      fs.mkdirSync(emptyDir, { recursive: true });
+      // No index.ts or index.tsx inside emptyDir
+
+      const importerFile = path.join(tmpDir, "caller.ts");
+      const content = `import something from "@app/empty";`;
+      const result = parseFile(importerFile, content, {
+        baseDir: tmpDir,
+        paths: { "@app/*": ["src/*"] },
+      });
+
+      const edge = result.edges.find(
+        (e) => e.relationship_type === "IMPORTS" && e.target_id === emptyDir
+      );
+      expect(edge).toBeDefined();
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("probeExtensions — .tsx extension probe", () => {
+  it("resolves alias to .tsx file when only .tsx exists (no .ts or directory)", () => {
+    const tmpDir = fs.mkdtempSync(path.join(path.sep, "tmp", "knocoph-probe-"));
+    try {
+      const srcDir = path.join(tmpDir, "src");
+      fs.mkdirSync(srcDir);
+      const targetFile = path.join(srcDir, "widget.tsx");
+      fs.writeFileSync(targetFile, "export function Widget() {}");
+      // No widget.ts and no widget/ directory
+
+      const importerFile = path.join(tmpDir, "caller.ts");
+      const content = `import { Widget } from "@app/widget";`;
+      const result = parseFile(importerFile, content, {
+        baseDir: tmpDir,
+        paths: { "@app/*": ["src/*"] },
+      });
+
+      const edge = result.edges.find(
+        (e) => e.relationship_type === "IMPORTS" && e.target_id === targetFile
+      );
+      expect(edge).toBeDefined();
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("probeExtensions — dangling alias (nothing exists)", () => {
+  it("returns the raw resolved candidate when no file or directory matches", () => {
+    const tmpDir = fs.mkdtempSync(path.join(path.sep, "tmp", "knocoph-probe-"));
+    try {
+      // src/ghost does not exist in any form
+      const expectedCandidate = path.join(tmpDir, "src", "ghost");
+
+      const importerFile = path.join(tmpDir, "caller.ts");
+      const content = `import something from "@app/ghost";`;
+      const result = parseFile(importerFile, content, {
+        baseDir: tmpDir,
+        paths: { "@app/*": ["src/*"] },
+      });
+
+      const edge = result.edges.find(
+        (e) =>
+          e.relationship_type === "IMPORTS" && e.target_id === expectedCandidate
+      );
+      expect(edge).toBeDefined();
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });

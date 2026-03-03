@@ -7,6 +7,7 @@ import chokidar, { type FSWatcher } from "chokidar";
 import { deleteFile } from "./graph.js";
 import { indexFile } from "./indexer.js";
 import { getImportersOf } from "./queries.js";
+import type { PathAliases } from "./types.js";
 
 export let activeWatcher: FSWatcher | null = null;
 
@@ -14,7 +15,8 @@ export function startWatcher(
   db: Database.Database,
   rootDir: string,
   globs: string[],
-  ignore: string[]
+  ignore: string[],
+  pathAliases?: PathAliases
 ): void {
   if (activeWatcher !== null) {
     activeWatcher.close();
@@ -49,7 +51,7 @@ export function startWatcher(
         pending.delete(absolutePath);
 
         // Index the primary file that changed
-        const result = indexFile(db, absolutePath);
+        const result = indexFile(db, absolutePath, pathAliases);
         console.error(
           `[knocoph] Re-indexed ${absolutePath} (${result.status})`
         );
@@ -73,7 +75,7 @@ export function startWatcher(
               importerPath,
               setTimeout(() => {
                 pending.delete(importerPath);
-                indexFile(db, importerPath);
+                indexFile(db, importerPath, pathAliases);
               }, 1000) // Longer delay for ripple
             );
           }
