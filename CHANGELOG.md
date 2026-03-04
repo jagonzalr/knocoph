@@ -1,5 +1,13 @@
 # knocoph
 
+## 1.4.0
+
+### Minor Changes
+
+- 8ad1c45: Support tsconfig path alias resolution
+
+  Resolve imports using `compilerOptions.paths` mappings. Fixes dangling edges for `@myapp/auth`-style aliases.
+
 ## 1.3.0
 
 ### Minor Changes
