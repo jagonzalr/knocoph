@@ -5,7 +5,13 @@ import * as path from "node:path";
 import { parse } from "@typescript-eslint/typescript-estree";
 import type { TSESTree } from "@typescript-eslint/typescript-estree";
 
-import type { NodeKind, ParsedEdge, ParsedFile, ParsedNode } from "./types.js";
+import type {
+  NodeKind,
+  ParsedEdge,
+  ParsedFile,
+  ParsedNode,
+  PathAliases,
+} from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -17,11 +23,91 @@ function nodeId(filePath: string, name: string, kind: string): string {
     .digest("hex");
 }
 
-// Resolve a relative import specifier against the importing file's directory.
-// TypeScript projects with NodeNext moduleResolution write imports as `./foo.js`
-// but the actual source file on disk is `./foo.ts`. When the resolved path does
-// not exist, try common TypeScript extension replacements (.js → .ts, etc.).
-function resolveImportPath(fromFile: string, specifier: string): string {
+// Resolve a non-relative specifier against tsconfig compilerOptions.paths.
+// Supports:
+//   - Wildcard patterns: "@scope/*" -> "./src/*"  (prefix replacement)
+//   - Exact patterns:    "@auth"    -> "./src/auth/index.ts"
+// Complex patterns with multiple wildcards or non-prefix wildcards are not
+// supported and are skipped. Only the first replacement in each array is used.
+// Returns the resolved absolute path on match, or null if no pattern matches.
+function resolvePathAlias(
+  specifier: string,
+  pathAliases: PathAliases
+): string | null {
+  const { baseDir, paths } = pathAliases;
+
+  for (const [pattern, replacements] of Object.entries(paths)) {
+    if (!replacements.length) continue;
+    const replacement = replacements[0]!;
+
+    if (pattern.endsWith("/*")) {
+      // Wildcard: "@scope/*" — match specifiers starting with "@scope/"
+      const patternPrefix = pattern.slice(0, -2);
+      if (!specifier.startsWith(patternPrefix + "/")) continue;
+      const rest = specifier.slice(patternPrefix.length + 1);
+      const replacementBase = replacement.endsWith("/*")
+        ? replacement.slice(0, -2)
+        : replacement;
+      return probeExtensions(path.resolve(baseDir, replacementBase, rest));
+    } else {
+      // Exact: "@auth" — must be an identical match
+      if (specifier !== pattern) continue;
+      return probeExtensions(path.resolve(baseDir, replacement));
+    }
+  }
+
+  return null;
+}
+
+// Probe common TypeScript file existence variants for a candidate path.
+// Returns the first path that exists on disk, or candidate as-is (dangling).
+// When the candidate is an existing directory, checks for index.ts / index.tsx
+// inside it (common TypeScript barrel import pattern).
+function probeExtensions(candidate: string): string {
+  if (fs.existsSync(candidate)) {
+    // Directory: look for an index file inside it.
+    if (fs.statSync(candidate).isDirectory()) {
+      const indexTs = path.join(candidate, "index.ts");
+      if (fs.existsSync(indexTs)) return indexTs;
+      const indexTsx = path.join(candidate, "index.tsx");
+      if (fs.existsSync(indexTsx)) return indexTsx;
+      // No index file — return directory as-is (dangling edge is allowed).
+      return candidate;
+    }
+    return candidate; // regular file
+  }
+  const ts = candidate + ".ts";
+  if (fs.existsSync(ts)) return ts;
+  const tsx = candidate + ".tsx";
+  if (fs.existsSync(tsx)) return tsx;
+  const indexTs = path.join(candidate, "index.ts");
+  if (fs.existsSync(indexTs)) return indexTs;
+  const indexTsx = path.join(candidate, "index.tsx");
+  if (fs.existsSync(indexTsx)) return indexTsx;
+  return candidate;
+}
+
+// Resolve an import specifier to an absolute file path.
+//
+// - Non-relative specifiers: path alias resolution via pathAliases (if
+//   provided), then fallback to returning the specifier as-is (external module).
+// - Relative specifiers: standard path.resolve, with TypeScript extension
+//   remapping (.js → .ts, .mjs → .mts, .cjs → .cts) when the raw path does
+//   not exist on disk.
+function resolveImportPath(
+  fromFile: string,
+  specifier: string,
+  pathAliases?: PathAliases
+): string {
+  if (!specifier.startsWith(".")) {
+    // Non-relative — try path alias resolution, then treat as external module.
+    if (pathAliases) {
+      const aliased = resolvePathAlias(specifier, pathAliases);
+      if (aliased !== null) return aliased;
+    }
+    return specifier;
+  }
+
   const raw = path.resolve(path.dirname(fromFile), specifier);
   if (fs.existsSync(raw)) return raw;
 
@@ -57,7 +143,8 @@ type SymbolEntry = { resolvedName: string; sourceFile: string };
 // external packages, or the current filePath for locally declared symbols.
 function buildSymbolTable(
   ast: TSESTree.Program,
-  filePath: string
+  filePath: string,
+  pathAliases?: PathAliases
 ): Map<string, SymbolEntry> {
   const table = new Map<string, SymbolEntry>();
 
@@ -65,9 +152,7 @@ function buildSymbolTable(
   for (const stmt of ast.body) {
     if (stmt.type !== "ImportDeclaration") continue;
     const raw = stmt.source.value;
-    const sourceFile = raw.startsWith(".")
-      ? resolveImportPath(filePath, raw)
-      : raw; // external module — keep specifier as-is
+    const sourceFile = resolveImportPath(filePath, raw, pathAliases);
 
     for (const specifier of stmt.specifiers) {
       if (specifier.type === "ImportDefaultSpecifier") {
@@ -335,7 +420,11 @@ function collectReferenceEdges(
 // Main export
 // ---------------------------------------------------------------------------
 
-export function parseFile(filePath: string, content: string): ParsedFile {
+export function parseFile(
+  filePath: string,
+  content: string,
+  pathAliases?: PathAliases
+): ParsedFile {
   // Let parse errors propagate to the caller (indexer), which catches them and
   // records the file as status 'error' without writing partial data (section 9.1).
   const ast: TSESTree.Program = parse(content, {
@@ -345,7 +434,7 @@ export function parseFile(filePath: string, content: string): ParsedFile {
     range: false,
   });
 
-  const symbolTable = buildSymbolTable(ast, filePath);
+  const symbolTable = buildSymbolTable(ast, filePath, pathAliases);
   const nodes: ParsedNode[] = [];
   const edges: ParsedEdge[] = [];
 
@@ -577,9 +666,7 @@ export function parseFile(filePath: string, content: string): ParsedFile {
       case "ImportDeclaration": {
         // IMPORTS edge: file-level node -> resolved path (or external module name)
         const raw = stmt.source.value;
-        const target = raw.startsWith(".")
-          ? resolveImportPath(filePath, raw)
-          : raw;
+        const target = resolveImportPath(filePath, raw, pathAliases);
         fileNodeNeeded = true;
         edges.push({
           source_id: fileNodeId,
@@ -593,9 +680,7 @@ export function parseFile(filePath: string, content: string): ParsedFile {
         if (stmt.source) {
           // Re-export: export { foo as bar } from './x.js'
           const raw = stmt.source.value;
-          const resolvedSource = raw.startsWith(".")
-            ? resolveImportPath(filePath, raw)
-            : raw;
+          const resolvedSource = resolveImportPath(filePath, raw, pathAliases);
           fileNodeNeeded = true;
 
           // IMPORTS edge
@@ -656,9 +741,7 @@ export function parseFile(filePath: string, content: string): ParsedFile {
         // export * from './x.js' — emit IMPORTS edge only (EXPORTS is not tracked per-symbol)
         if (stmt.source) {
           const raw = stmt.source.value;
-          const target = raw.startsWith(".")
-            ? resolveImportPath(filePath, raw)
-            : raw;
+          const target = resolveImportPath(filePath, raw, pathAliases);
           fileNodeNeeded = true;
           edges.push({
             source_id: fileNodeId,
@@ -691,9 +774,7 @@ export function parseFile(filePath: string, content: string): ParsedFile {
       console.error("[knocoph] unresolvable dynamic import in " + filePath);
       return;
     }
-    const target = source.value.startsWith(".")
-      ? resolveImportPath(filePath, source.value)
-      : source.value;
+    const target = resolveImportPath(filePath, source.value, pathAliases);
     fileNodeNeeded = true;
     edges.push({
       source_id: fileNodeId,

@@ -71,6 +71,7 @@ This approach minimizes token consumption and provides fast, accurate structural
 - **Zero file reading** — query structural questions without opening source files
 - **MCP tools** — 7 specialized query tools for different exploration patterns
 - **Cross-file relationships** — tracks imports, exports, calls, inheritance, and containment
+- **TypeScript path alias resolution** — automatically reads `tsconfig.json` to resolve `@scope/...` style imports
 
 ## How It Works
 
@@ -81,15 +82,42 @@ This approach minimizes token consumption and provides fast, accurate structural
 
 ## MCP Tools
 
-| Tool                 | Purpose                                                                       |
-| -------------------- | ----------------------------------------------------------------------------- |
-| `codebase_overview`  | Get structural summary of entire codebase (files, symbols, kind distribution) |
-| `find_symbol`        | Locate any symbol by name; optionally include source code snippet             |
-| `get_neighbors`      | Explore incoming/outgoing relationships by symbol name or ID                  |
-| `get_snippet`        | Fetch exact source code snippet for a symbol or line range                    |
-| `explain_impact`     | Blast radius and dependency analysis; understand why a symbol exists          |
-| `query_architecture` | File-level view — what symbols does a file define and import/export?          |
-| `index_project`      | Trigger or refresh graph indexing for a codebase                              |
+| Tool                 | Purpose                                                                          |
+| -------------------- | -------------------------------------------------------------------------------- |
+| `codebase_overview`  | Get structural summary of entire codebase (files, symbols, kind distribution)    |
+| `find_symbol`        | Locate any symbol by name; optionally include source code snippet                |
+| `get_neighbors`      | Explore incoming/outgoing relationships by symbol name or ID                     |
+| `get_snippet`        | Fetch exact source code snippet for a symbol or line range                       |
+| `explain_impact`     | Blast radius and dependency analysis; understand why a symbol exists             |
+| `query_architecture` | File-level view — what symbols does a file define and import/export?             |
+| `index_project`      | Trigger or refresh graph indexing; auto-detects `tsconfig.json` for path aliases |
+
+## TypeScript Path Aliases
+
+If your project uses `compilerOptions.paths` in `tsconfig.json` (e.g. `@myapp/*`, `@auth`), Knocoph resolves them automatically. When `index_project` is called, it looks for `tsconfig.json` in the project root and reads `compilerOptions.paths` and `baseUrl` to resolve aliased imports to their real file paths.
+
+No configuration needed for the standard setup:
+
+```jsonc
+// tsconfig.json
+{
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@myapp/*": ["src/*"], // @myapp/utils → src/utils.ts
+      "@auth": ["src/auth/index.ts"],
+    },
+  },
+}
+```
+
+If your `tsconfig.json` is not at the project root, pass the path explicitly:
+
+```
+index_project { root_dir: ".", tsconfig_path: "./packages/app/tsconfig.json" }
+```
+
+Supported patterns: simple prefix wildcards (`@scope/*`) and exact matches (`@auth`). Only the first replacement in each array is used. Complex multi-wildcard patterns are skipped.
 
 ## Quick Reference
 

@@ -315,3 +315,55 @@ describe("indexProject — parser version invalidation", () => {
     expect(stats.files_skipped).toBe(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Path alias resolution — PR-V2-4
+// ---------------------------------------------------------------------------
+
+describe("indexProject — path alias resolution", () => {
+  it("resolves alias imports so aliased file is indexed and edges connect", () => {
+    // Project layout:
+    //   src/lib.ts          — defines authLogin
+    //   tsconfig paths: { "@app/*": ["src/*"] }
+    //   main.ts             — imports authLogin from "@app/lib"
+    const srcDir = path.join(tmpDir, "src");
+    fs.mkdirSync(srcDir);
+    const libFile = path.join(srcDir, "lib.ts");
+    fs.writeFileSync(libFile, "export function authLogin() {}");
+    const mainFile = path.join(tmpDir, "main.ts");
+    fs.writeFileSync(mainFile, `import { authLogin } from "@app/lib";`);
+
+    const stats = indexProject(db, tmpDir, ["**/*.ts"], [], {
+      baseDir: tmpDir,
+      paths: { "@app/*": ["src/*"] },
+    });
+
+    expect(stats.files_updated).toBe(2);
+
+    // Both files should be indexed
+    expect(findNodeByName(db, "authLogin")).toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// indexFile — write transaction failure
+// ---------------------------------------------------------------------------
+
+describe("indexFile — write transaction failure", () => {
+  it("returns error when the database rejects writes mid-index", () => {
+    const file = path.join(tmpDir, "a.ts");
+    fs.writeFileSync(file, "export function foo() {}");
+    indexFile(db, file); // first index — stores hash
+
+    // Modify the file so the hash changes, ensuring indexFile tries to write.
+    fs.writeFileSync(file, "export function foo() { return 42; }");
+
+    // Make all subsequent writes throw.
+    db.pragma("query_only = ON");
+
+    const result = indexFile(db, file);
+
+    expect(result.status).toBe("error");
+    expect(result.error).toBeDefined();
+  });
+});

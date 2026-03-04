@@ -1950,30 +1950,101 @@ Complete and validate all v1 PRs before starting any of these. "Validate" means 
 
 ---
 
-### PR-V2-3: TypeScript Compiler API for Semantic Call Resolution
+### PR-V2-3: Constructor and Parameter Type Heuristic for Instance Call Resolution
 
-**Goal.** Resolve method calls on instances (`svc.create()` -> `UserService.create`).
+**Goal.** Resolve method calls on instances (`svc.create()` -> `UserService.create`) using pure ESTree analysis. No new runtime dependencies.
 
-**Files:** `src/parser.ts`, new `src/resolver.ts`
+**Files:** `src/parser.ts`, `tests/parser.test.ts`, new fixture `tests/fixtures/instance-calls.ts`
 
-**Design.** Gate behind `knocoph_DEEP_RESOLVE=1` env var.
+**Motivation.** The current `collectCallEdges` handles three patterns: direct calls (`foo()`), `this.method()`, and `importedModule.method()`. The remaining gap is method calls on locally-constructed or parameter-injected instances — e.g. `const svc = new UserService(); svc.create()`. The original plan proposed using the TypeScript Compiler API (`ts.Program` + `TypeChecker`) for this. That approach was evaluated and deferred (see section 16: Future / Exploratory) because:
 
-When set:
+- It adds `typescript` (~70MB) as a runtime dependency, roughly doubling install size
+- `ts.createProgram` is inherently expensive (seconds, not milliseconds), contradicting Knocoph's fast-indexing goal
+- The TS Compiler API is not a stable public API, creating ongoing maintenance burden
+- It violates the project's KISS/YAGNI principles stated in AGENTS.md
+- The env-var gate (`knocoph_DEEP_RESOLVE=1`) means most users would never enable it, yielding high maintenance cost for low adoption
 
-1. After ESTree parse, collect unresolved MemberExpression call targets.
-2. Create `ts.Program` per file: `ts.createProgram([filePath], { strict: false, skipLibCheck: true, noEmit: true })`.
-3. Get `TypeChecker`.
-4. Re-parse with `typescript-estree` using `programs` option to get `parserServices` (ESTree-to-TS-AST bridge).
-5. For each unresolved call, use `checker.getTypeAtLocation(receiverTsNode)`, get symbol, get declaration, compute target node ID.
-6. Emit additional CALLS edges.
+A pure ESTree heuristic covers ~80% of the remaining gap with zero new dependencies.
 
-**Performance.** Profile on 500-file project before releasing. If per-file program creation adds >10 seconds to a full scan, add a single shared `ts.Program` for the entire project run and reuse it.
+**Design.**
 
-**Complexity note.** Not suitable for a junior engineer working alone. Pair-program or assign to someone with prior experience in both `typescript-estree` and the TS compiler API.
+Extend the symbol table built in `buildSymbolTable` to track **local variable-to-type mappings** for two patterns:
+
+1. **Constructor assignments:** `const svc = new UserService()` — record that `svc` maps to class name `UserService`.
+
+   In `buildSymbolTable`, when visiting `VariableDeclarator` nodes, check if `init` is a `NewExpression` with an `Identifier` callee. If so, add `svc` -> `{ resolvedName: "UserService", sourceFile: <resolved from symbol table or current file> }` to the symbol table.
+
+2. **Typed parameters:** `function handler(svc: UserService)` — record that `svc` maps to type name `UserService`.
+
+   In `buildSymbolTable`, when visiting `FunctionDeclaration` / `ArrowFunctionExpression` / `MethodDefinition` params, check if the parameter has a `TSTypeAnnotation` with a `TSTypeReference` whose `typeName` is an `Identifier`. If so, add `svc` -> `{ resolvedName: "UserService", sourceFile: <resolved from symbol table or current file> }`.
+
+3. **Resolution in `collectCallEdges`:** When encountering `obj.method()` where `obj` is an `Identifier`, check the symbol table. If `obj` maps to a class/interface name, resolve the call as `nodeId(sourceFile, method, "method")`. This extends the existing `MemberExpression` handling (lines 260-268 of `parser.ts`) — currently it only resolves when `obj` is a direct import. The new logic adds a fallback: if `obj` is not directly imported but _is_ in the symbol table as a local-to-type mapping, use the type's source file.
+
+**What this does NOT handle (and that's OK):**
+
+- Generics: `const svc = new Repository<User>()` — the generic parameter is ignored, only the class name matters for resolution
+- Return types: `const svc = getService()` — would require type inference, which needs the compiler API
+- Intersection/union types: `svc: UserService | AdminService` — ambiguous, skip
+- Chained calls: `getService().create()` — requires return type tracking
+- Reassignment: `let svc = new A(); svc = new B(); svc.foo()` — first assignment wins, documented inaccuracy
+
+These gaps are documented and accepted. The dangling-edge behavior (creating a target node ID that may match or not) is the existing fallback.
+
+**Tasks:**
+
+1. New fixture `tests/fixtures/instance-calls.ts`:
+
+   ```typescript
+   import { UserService } from "./cross-file/a.js";
+
+   // Pattern 1: constructor assignment
+   const svc = new UserService();
+   export function createUser() {
+     svc.create();
+   }
+
+   // Pattern 2: typed parameter
+   export function handleRequest(service: UserService) {
+     service.update();
+   }
+
+   // Pattern 3: local class instance
+   class Logger {
+     log(msg: string) {}
+   }
+   const logger = new Logger();
+   export function doWork() {
+     logger.log("hello");
+   }
+   ```
+
+2. Update `buildSymbolTable` in `src/parser.ts`:
+   - Add constructor-assignment tracking (visit `VariableDeclarator` with `NewExpression` init)
+   - Add typed-parameter tracking (visit function params with `TSTypeAnnotation` → `TSTypeReference`)
+   - Store these entries in the same `Map<string, SymbolEntry>` structure — the `resolvedName` field holds the class/interface name, `sourceFile` holds the resolved file
+
+3. Update `collectCallEdges` in `src/parser.ts`:
+   - In the `MemberExpression` / `obj.type === "Identifier"` branch, extend the existing logic: if `entry.sourceFile === filePath` (currently returns early), check if the entry is a type-mapping and resolve the method call target
+
+4. `tests/parser.test.ts`: Add tests for the new fixture:
+   - `svc.create()` produces a CALLS edge to `UserService.create`
+   - `service.update()` produces a CALLS edge to `UserService.update`
+   - `logger.log()` produces a CALLS edge to `Logger.log`
+   - Unresolvable patterns (no `new`, no type annotation) produce no false CALLS edges
+
+**Acceptance criteria:**
+
+- `npm run test:ci` passes with 80%+ coverage on `src/parser.ts`
+- No new runtime dependencies added
+- Constructor and typed-parameter patterns produce correct CALLS edges
+- Existing tests remain green — no regressions in direct call or `this.method()` resolution
+- Performance: `parseFile` on a 1000-line file completes in under 50ms (same as today)
 
 ---
 
 ### PR-V2-4: tsconfig Path Alias Resolution
+
+**Priority note.** This PR should be implemented **before** PR-V2-3. Path alias resolution fixes dangling IMPORTS edges for `@scope/...` style imports, which are extremely common in real TypeScript projects. Every unresolved path alias cascades into missing CALLS and REFERENCES edges for all symbols in that module. The fix is simple (prefix replacement in `resolveImportPath`), the impact is large, and the risk is near-zero. Prioritize this over PR-V2-3.
 
 **Goal.** Resolve imports using `compilerOptions.paths` mappings. Fixes dangling edges for `@myapp/auth`-style aliases.
 
@@ -2332,6 +2403,48 @@ After implementing these changes, the behavioral guidance in section 14 should b
 - `explain_impact` with `include_paths: true` returns both `affected_nodes` and `paths`
 - Ambiguous name resolution returns a clear error message listing the matches
 - AGENTS.md / CLAUDE.md updated with new tool guidance
+
+---
+
+## 16. Future / Exploratory
+
+Items in this section are deferred. They represent ideas that were evaluated and intentionally postponed — not rejected, but not worth implementing until real-world usage demonstrates a clear need.
+
+---
+
+### Deferred: TypeScript Compiler API for Semantic Call Resolution
+
+**Original plan reference:** This was PR-V2-3 in the initial V2 roadmap.
+
+**What it would do.** Use `ts.createProgram` + `TypeChecker` to resolve method calls on instances where the receiver type cannot be determined from ESTree alone. For example, `getService().create()` where `getService()` returns `UserService` — this requires return-type inference that only the TS type checker can provide.
+
+**Why it was deferred:**
+
+1. **Dependency cost.** `typescript` is ~70MB. Adding it as a runtime dependency roughly doubles Knocoph's install size. For an MCP tool whose value proposition includes being fast and lightweight, this is a significant tradeoff.
+
+2. **Performance.** `ts.createProgram` performs full module resolution and builds a type graph. Even with a shared program across files, initial creation on a 500-file project takes seconds. This contradicts Knocoph's sub-second indexing goal. The plan suggested gating behind `knocoph_DEEP_RESOLVE=1`, but opt-in features with low adoption carry high maintenance cost per user.
+
+3. **Maintenance burden.** The TS Compiler API is not a stable public API. It changes across TypeScript versions without deprecation cycles. An open-source project cannot afford to track these changes indefinitely for a feature most users won't enable.
+
+4. **Complexity.** The original plan noted: "Not suitable for a junior engineer working alone." For a growing open-source project that values contributions from all skill levels, this creates an opaque area of the codebase that only specialists can maintain.
+
+5. **KISS/YAGNI.** The project's stated principles (AGENTS.md) explicitly prefer boring solutions over clever abstractions and prohibit speculative extensibility. The TS Compiler API integration is neither boring nor proven-necessary.
+
+6. **Diminishing returns.** PR-V2-3 (Constructor and Parameter Type Heuristic) covers ~80% of the instance-call gap using pure ESTree. The remaining ~20% — return-type inference, generic resolution, complex type narrowing — are edge cases that produce dangling edges (the existing fallback behavior) rather than incorrect edges.
+
+**When to reconsider:**
+
+- If multiple users file issues specifically about unresolved instance method calls that the ESTree heuristic cannot handle
+- If the project grows to a point where an optional companion package (`knocoph-deep-resolve`) is maintainable
+- If the TypeScript team stabilizes the Compiler API or provides a lighter-weight type resolution API
+
+**If revived, design constraints:**
+
+- Must be a separate optional package, not a core dependency
+- Must use a single shared `ts.Program` per project (not per-file)
+- Must run as a post-indexing enrichment pass that can be aborted without affecting the base graph
+- Must not block the synchronous `parseFile` → `indexFile` → `writeTransaction` pipeline
+- Must have a hard timeout (e.g., 30s) after which it yields partial results and logs a warning
 
 ---
 

@@ -8,6 +8,7 @@ export default defineConfig({
     coverage: {
       provider: "v8",
       include: [
+        "src/file-cache.ts",
         "src/parser.ts",
         "src/queries.ts",
         "src/graph.ts",
