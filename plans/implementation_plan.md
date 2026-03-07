@@ -2042,7 +2042,7 @@ These gaps are documented and accepted. The dangling-edge behavior (creating a t
 
 ---
 
-### PR-V2-4: tsconfig Path Alias Resolution
+### PR-V2-4: tsconfig Path Alias Resolution ✅
 
 **Priority note.** This PR should be implemented **before** PR-V2-3. Path alias resolution fixes dangling IMPORTS edges for `@scope/...` style imports, which are extremely common in real TypeScript projects. Every unresolved path alias cascades into missing CALLS and REFERENCES edges for all symbols in that module. The fix is simple (prefix replacement in `resolveImportPath`), the impact is large, and the risk is near-zero. Prioritize this over PR-V2-3.
 

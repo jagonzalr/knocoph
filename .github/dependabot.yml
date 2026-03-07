@@ -1,0 +1,30 @@
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "daily"
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "cleanup"
+      include: "scope"
+    open-pull-requests-limit: 5
+    groups:
+      auto-merge-patch-verion-upgrades-of-production-dependencies:
+        dependency-type: "production"
+        update-types:
+          - "patch"
+      auto-merge-non-major-version-upgrades-of-development-dependencies:
+        dependency-type: "development"
+        update-types:
+          - "patch"
+          - "minor"
+      merge-version-upgrades-of-production-dependencies:
+        dependency-type: "production"
+        update-types:
+          - "minor"
