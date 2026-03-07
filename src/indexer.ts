@@ -12,7 +12,7 @@ import {
   insertNode,
   writeTransaction,
 } from "./graph.js";
-import { parseFile } from "./parser.js";
+import { parseFile } from "./parser/index.js";
 import type { IndexStats, PathAliases } from "./types.js";
 
 // Bump this version whenever parser logic changes in a way that affects
