@@ -1,0 +1,79 @@
+name: Auto-merge Dependabot PRs
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency: ${{ github.workflow }}-${{ github.ref }}
+
+jobs:
+  auto-merge:
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # Dev dependencies: auto-merge without version bump
+      - name: Approve dev dependency PR
+        if: steps.metadata.outputs.dependency-group == 'auto-merge-non-major-version-upgrades-of-development-dependencies'
+        run: gh pr review --approve "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Auto-merge dev dependency PR
+        if: steps.metadata.outputs.dependency-group == 'auto-merge-non-major-version-upgrades-of-development-dependencies'
+        run: gh pr merge --auto --merge "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Production dependencies: auto-merge with patch changeset
+      - name: Checkout code
+        if: steps.metadata.outputs.dependency-group == 'auto-merge-patch-verion-upgrades-of-production-dependencies'
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.head_ref }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create patch changeset
+        if: steps.metadata.outputs.dependency-group == 'auto-merge-patch-verion-upgrades-of-production-dependencies'
+        run: |
+          ADJECTIVES=(brave calm dark eager fancy gentle happy jolly kind lively mighty noble proud quiet rapid silly tame vivid witty zesty)
+          ANIMALS=(badger bear camel cobra crane eagle ferret finch gecko gopher heron ibis jaguar koala lemur llama lynx mink moose otter panda quail raven shark sloth snake swift tiger viper weasel zebra)
+          ADJECTIVE=${ADJECTIVES[$((RANDOM % ${#ADJECTIVES[@]}))]}
+          ANIMAL=${ANIMALS[$((RANDOM % ${#ANIMALS[@]}))]}
+          CHANGESET_ID="${ADJECTIVE}-${ANIMAL}"
+          CHANGESET_FILE=".changeset/dependabot-${CHANGESET_ID}.md"
+
+          printf '%s\n' '---' '"knocoph": patch' '---' '' "Bump ${DEPENDENCY_NAMES}" > "$CHANGESET_FILE"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$CHANGESET_FILE"
+          git commit -m "Add patch changeset for ${DEPENDENCY_NAMES}"
+          git push
+        env:
+          DEPENDENCY_NAMES: ${{ steps.metadata.outputs.dependency-names }}
+
+      - name: Approve production dependency PR
+        if: steps.metadata.outputs.dependency-group == 'auto-merge-patch-verion-upgrades-of-production-dependencies'
+        run: gh pr review --approve "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Auto-merge production dependency PR
+        if: steps.metadata.outputs.dependency-group == 'auto-merge-patch-verion-upgrades-of-production-dependencies'
+        run: gh pr merge --auto --merge "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
