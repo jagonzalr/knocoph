@@ -9,7 +9,7 @@ export default defineConfig({
       provider: "v8",
       include: [
         "src/file-cache.ts",
-        "src/parser.ts",
+        "src/parser/*.ts",
         "src/queries.ts",
         "src/graph.ts",
         "src/indexer.ts",
