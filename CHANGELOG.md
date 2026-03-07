@@ -1,5 +1,13 @@
 # knocoph
 
+## 1.5.0
+
+### Minor Changes
+
+- c60fada: Constructor and Parameter Type Heuristic for Instance Call Resolution
+
+  Resolve method calls on instances (`svc.create()` -> `UserService.create`) using pure ESTree analysis. No new runtime dependencies.
+
 ## 1.4.0
 
 ### Minor Changes
