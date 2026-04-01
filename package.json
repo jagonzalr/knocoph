@@ -44,9 +44,9 @@
     "release": "changeset publish"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "1.27.1",
-    "@typescript-eslint/typescript-estree": "8.56.1",
-    "better-sqlite3": "12.6.2",
+    "@modelcontextprotocol/sdk": "1.28.0",
+    "@typescript-eslint/typescript-estree": "8.57.2",
+    "better-sqlite3": "12.8.0",
     "chokidar": "5.0.0",
     "zod": "4.3.6"
   },
